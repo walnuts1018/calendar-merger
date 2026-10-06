@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { CalendarEvent, MergeGroup } from "../../src/domain/model";
@@ -19,9 +21,11 @@ import { GoogleCalendarDomAdapter } from "../../src/gcal/adapter";
 import {
   calendarConfidence,
   calendarFallbackKey,
+  decodeCalendarIdFromEventId,
   readCalendarId,
   resolveCalendarByLabel,
 } from "../../src/gcal/identity";
+import { createCalendarViewAdapters } from "../../src/gcal/view-adapter";
 import { createDefaultSettings, migrateSettings } from "../../src/storage/settings";
 
 function event(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
@@ -206,64 +210,60 @@ describe("Calendar identity", () => {
     expect(adapter.getCalendarToggleElement(calendars[0]?.key ?? "")).toBeNull();
     section.remove();
   });
+
+  it("Google Calendarの短縮形式の予定IDからカレンダーIDを復元する", () => {
+    const encode = (value: string) =>
+      btoa(value).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+
+    expect(decodeCalendarIdFromEventId(encode("event-id@gmail.com owner@m"))).toBe(
+      "owner@gmail.com",
+    );
+    expect(
+      decodeCalendarIdFromEventId(encode("event-id@gmail.com abcdef@group.calendar.google.com")),
+    ).toBe("abcdef@group.calendar.google.com");
+    expect(decodeCalendarIdFromEventId(encode("event-id@gmail.com owner@x"))).toBeNull();
+    expect(decodeCalendarIdFromEventId("not-an-encoded-event-id")).toBeNull();
+  });
+
+  it("任意のdata-idをカレンダーIDとして扱わず、複数候補も拒否する", () => {
+    const row = document.createElement("div");
+    row.setAttribute("role", "listitem");
+    const metadata = document.createElement("div");
+    metadata.setAttribute("data-id", btoa("internal-button-id").replace(/=+$/gu, ""));
+    row.append(metadata);
+    expect(readCalendarId(row)).toBeNull();
+
+    metadata.setAttribute("data-id", btoa("first@example.test").replace(/=+$/gu, ""));
+    const second = document.createElement("span");
+    second.setAttribute("data-id", btoa("second@example.test").replace(/=+$/gu, ""));
+    row.append(second);
+    expect(readCalendarId(row)).toBeNull();
+  });
 });
 
 describe("Google Calendar DOM adaptation", () => {
-  it("実際のカレンダー行と週表示の予定チップから重複候補を作る", () => {
+  it("匿名化したGoogle Calendar週表示DOMから同色カレンダーの3予定を識別する", () => {
     document.documentElement.setAttribute("data-calendar-view", "week");
-    const list = document.createElement("div");
-    list.setAttribute("role", "list");
-    list.setAttribute("aria-label", "マイカレンダー");
-    const calendarRows = [
-      { id: "primary@example.test", label: "Primary", color: "rgb(75, 153, 210)" },
-      { id: "secondary@example.test", label: "Secondary", color: "rgb(216, 86, 117)" },
+    const encode = (value: string) =>
+      btoa(value).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+    const owners = [
+      { id: "primary@gmail.com", encoded: "primary@m" },
+      { id: "shared@example.test", encoded: "shared@example.test" },
+      { id: "third@group.calendar.google.com", encoded: "third@group.calendar.google.com" },
     ];
-
-    for (const calendar of calendarRows) {
-      const row = document.createElement("li");
-      row.setAttribute("role", "listitem");
-      const metadata = document.createElement("div");
-      metadata.setAttribute("data-id", btoa(calendar.id).replace(/=+$/u, ""));
-      const swatch = document.createElement("span");
-      swatch.style.backgroundColor = calendar.color;
-      swatch.style.width = "18px";
-      swatch.style.height = "18px";
-      const control = document.createElement("input");
-      control.type = "checkbox";
-      control.checked = true;
-      control.setAttribute("aria-label", calendar.label);
-      const label = document.createElement("span");
-      label.textContent = calendar.label;
-      metadata.append(swatch, control, label);
-      row.append(metadata);
-      list.append(row);
+    const fixture = readFileSync(resolve("tests/fixtures/gcal/week-live.html"), "utf8");
+    let html = fixture;
+    for (const [index, owner] of owners.entries()) {
+      const calendarToken = ["PRIMARY", "SHARED", "THIRD"][index];
+      const eventToken = ["EVENT_PRIMARY", "EVENT_SHARED", "EVENT_THIRD"][index];
+      if (!calendarToken || !eventToken) continue;
+      html = html.replace(`__CALENDAR_${calendarToken}__`, encode(owner.id));
+      html = html.replace(
+        `__${eventToken}__`,
+        encode(`event-${index}@google.com ${owner.encoded}`),
+      );
     }
-    document.body.append(list);
-
-    const day = document.createElement("div");
-    day.setAttribute("role", "gridcell");
-    day.setAttribute("data-datekey", "28999");
-    for (const calendar of calendarRows) {
-      const event = document.createElement("div");
-      event.setAttribute("role", "button");
-      event.setAttribute("data-eventchip", "");
-      event.setAttribute("data-eventid", `${calendar.id}-event`);
-      event.style.backgroundColor = calendar.color;
-      event.style.top = "1055px";
-      event.style.height = "46px";
-      const visibleContent = document.createElement("div");
-      visibleContent.setAttribute("aria-hidden", "true");
-      const contentLines = document.createElement("div");
-      const titleLine = document.createElement("div");
-      titleLine.textContent = "Test planning";
-      const timeLine = document.createElement("div");
-      timeLine.textContent = "午後10時～11時";
-      contentLines.append(titleLine, timeLine);
-      visibleContent.append(contentLines);
-      event.append(visibleContent);
-      day.append(event);
-    }
-    document.body.append(day);
+    document.body.insertAdjacentHTML("beforeend", html);
 
     const adapter = new GoogleCalendarDomAdapter(document);
     const calendars = adapter.listCalendars();
@@ -271,17 +271,100 @@ describe("Google Calendar DOM adaptation", () => {
     const groups = groupMergeCandidates(events);
 
     expect(calendars.map(({ key, confidence }) => [key, confidence])).toEqual([
-      ["calendar:primary@example.test", "strong"],
-      ["calendar:secondary@example.test", "strong"],
+      ["calendar:primary@gmail.com", "strong"],
+      ["calendar:shared@example.test", "strong"],
+      ["calendar:third@group.calendar.google.com", "strong"],
     ]);
+    expect(events).toHaveLength(3);
     expect(events.map(({ title, dateKey, layoutKey }) => [title, dateKey, layoutKey])).toEqual([
-      ["Test planning", "28999", "28999:1055:46"],
-      ["Test planning", "28999", "28999:1055:46"],
+      ["Planning、午後10:30", "29000", "29000:1079:22"],
+      ["Planning、午後10:30", "29000", "29000:1079:22"],
+      ["Planning、午後10:30", "29000", "29000:1079:22"],
     ]);
     expect(groups).toHaveLength(1);
+    expect(groups[0]?.members).toHaveLength(3);
 
-    list.remove();
-    day.remove();
+    document.querySelector('[role="list"][aria-label="My calendars"]')?.remove();
+    document.querySelector('[role="gridcell"][data-datekey="29000"]')?.remove();
+  });
+
+  it("匿名化した月表示DOMから時刻付き予定と終日予定を復元する", () => {
+    document.documentElement.setAttribute("data-calendar-view", "month");
+    const encode = (value: string) =>
+      btoa(value).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+    const owners = ["first@example.test", "second@example.test", "third@example.test"];
+    const tokens = ["FIRST", "SECOND", "THIRD"];
+    let html = readFileSync(resolve("tests/fixtures/gcal/month-live.html"), "utf8");
+    for (const [index, owner] of owners.entries()) {
+      const token = tokens[index];
+      if (!token) continue;
+      html = html.replace(`__CALENDAR_${token}__`, encode(owner));
+      html = html.replace(`__EVENT_${token}__`, encode(`timed-event-${index}@google.com ${owner}`));
+      html = html.replace(
+        `__ALL_DAY_${token}__`,
+        encode(`all-day-event-${index}@google.com ${owner}`),
+      );
+    }
+    html = html.replace("__DATE_LABEL__", "october-eighth");
+    document.body.insertAdjacentHTML("beforeend", html);
+
+    const events = new GoogleCalendarDomAdapter(document).listVisibleEvents();
+    console.log("month", new GoogleCalendarDomAdapter(document).getCurrentView(), document.querySelectorAll("[data-eventchip][data-eventid]").length);
+    const groups = groupMergeCandidates(events);
+    const timedEvents = events.filter(({ title }) => title === "Planning");
+    const allDayEvents = events.filter(({ title }) => title === "Birthday");
+
+    expect(events).toHaveLength(6);
+    expect(
+      timedEvents.map(({ dateKey, start, end, allDay }) => [dateKey, start, end, allDay]),
+    ).toEqual(Array(3).fill(["2026-10-08", "22:30", "23:00", false]));
+    expect(
+      allDayEvents.map(({ dateKey, start, end, allDay }) => [dateKey, start, end, allDay]),
+    ).toEqual(Array(3).fill(["2026-10-08", "00:00", "24:00", true]));
+    expect(groups).toHaveLength(2);
+    expect(groups.map(({ members }) => members)).toHaveLength(2);
+
+    document.querySelector('[role="list"][aria-label="My calendars"]')?.remove();
+    document.querySelector('[role="gridcell"][aria-labelledby="october-eighth"]')?.remove();
+  });
+
+  it("匿名化したスケジュール表示DOMから時刻と折りたたみ可能な行を識別する", () => {
+    document.documentElement.setAttribute("data-calendar-view", "schedule");
+    const encode = (value: string) =>
+      btoa(value).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+    const owners = ["first@example.test", "second@example.test", "third@example.test"];
+    const tokens = ["FIRST", "SECOND", "THIRD"];
+    let html = readFileSync(resolve("tests/fixtures/gcal/schedule-live.html"), "utf8");
+    for (const [index, owner] of owners.entries()) {
+      const token = tokens[index];
+      if (!token) continue;
+      html = html.replace(`__CALENDAR_${token}__`, encode(owner));
+      html = html.replace(`__EVENT_${token}__`, encode(`event-${index}@google.com ${owner}`));
+    }
+    document.body.insertAdjacentHTML("beforeend", html);
+
+    const adapter = new GoogleCalendarDomAdapter(document);
+    const events = adapter.listVisibleEvents();
+    const groups = groupMergeCandidates(events);
+    const elements = [...document.querySelectorAll<HTMLElement>("[data-eventchip][data-eventid]")];
+    const viewAdapter = createCalendarViewAdapters().get("schedule");
+    const eventElements = new Map(events.map((event, index) => [event.ref, elements[index]!]));
+
+    expect(events.map(({ title, dateKey, start, end }) => [title, dateKey, start, end])).toEqual(
+      Array(3).fill(["Planning", "29000", "22:30", "23:00"]),
+    );
+    expect(groups).toHaveLength(1);
+    expect(viewAdapter?.applyMergedGeometry(groups[0]?.members ?? [], eventElements)).toEqual({
+      safe: true,
+    });
+    expect(
+      elements.map((element) =>
+        viewAdapter?.mergeVisibilityContainer(element)?.getAttribute("role"),
+      ),
+    ).toEqual(["row", "row", "row"]);
+
+    document.querySelector('[role="list"][aria-label="My calendars"]')?.remove();
+    document.querySelector('[role="rowgroup"][data-datekey="29000"]')?.remove();
   });
 });
 
@@ -353,7 +436,7 @@ describe("Visibility transactions", () => {
     ]);
     expect(
       groupVisibilityTarget(
-        { id: "g", name: "Group", calendarKeys: ["a", "b"] },
+        ["a", "b"],
         new Map([
           ["a", true],
           ["b", false],
@@ -460,7 +543,7 @@ describe("Settings migration", () => {
         events: [{ title: "must not persist" }],
       }),
     ).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       mergeEnabled: false,
       calendars: { a: { color: "#abcdef", opacity: 1 }, b: { opacity: 1 } },
       groups: {},
@@ -468,5 +551,31 @@ describe("Settings migration", () => {
     });
     expect(migrateSettings({ schemaVersion: 99 })).toEqual(createDefaultSettings());
     expect(migrateSettings(null)).toEqual(createDefaultSettings());
+  });
+
+  it("旧group.calendarKeysを移行時だけ読み取りcalendar preferencesを唯一の所属元にする", () => {
+    expect(
+      migrateSettings({
+        schemaVersion: 1,
+        calendars: {
+          assigned: { opacity: 1 },
+          authoritative: { opacity: 1, groupId: "second" },
+        },
+        groups: {
+          first: { name: "First", calendarKeys: ["assigned", "authoritative"] },
+          second: { name: "Second", calendarKeys: ["authoritative"] },
+        },
+      }),
+    ).toMatchObject({
+      schemaVersion: 2,
+      calendars: {
+        assigned: { opacity: 1, groupId: "first" },
+        authoritative: { opacity: 1, groupId: "second" },
+      },
+      groups: {
+        first: { id: "first", name: "First" },
+        second: { id: "second", name: "Second" },
+      },
+    });
   });
 });

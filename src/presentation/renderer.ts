@@ -30,6 +30,7 @@ export class EventRenderer {
     string,
     { memberRefs: string; geometry: MergedGeometry }
   >();
+  private readonly mergeVisibilityContainers = new Map<HTMLElement, HTMLElement>();
 
   constructor(private readonly viewAdapters: ReadonlyMap<string, CalendarViewAdapter>) {}
 
@@ -123,20 +124,38 @@ export class EventRenderer {
         spotlightCalendarKeys,
         spotlightActive,
       });
+      const viewAdapter = this.viewAdapters.get(event.view);
+      const previousContainer = this.mergeVisibilityContainers.get(element);
+      const nextContainer = presentation.hiddenByMerge
+        ? (viewAdapter?.mergeVisibilityContainer(element) ?? null)
+        : null;
+      if (previousContainer && previousContainer !== nextContainer) this.restore(previousContainer);
+      if (nextContainer) {
+        this.write(nextContainer, "display", "none", "important");
+        this.rememberStyle(nextContainer);
+        this.mergeVisibilityContainers.set(element, nextContainer);
+      } else {
+        this.mergeVisibilityContainers.delete(element);
+      }
       this.apply(
         element,
         presentation,
         preferences.get((group?.canonical ?? event).calendarKey)?.color !== undefined ||
           (preferences.get((group?.canonical ?? event).calendarKey)?.opacity ?? 1) !== 1,
         geometryByCanonical.get(event.ref),
-        this.viewAdapters.get(event.view),
+        viewAdapter,
       );
       this.rememberStyle(element);
     }
 
     const staleElements = changedElements ?? this.touched;
     for (const element of staleElements)
-      if (!events.has(element) && this.touched.has(element)) this.restore(element);
+      if (!events.has(element) && this.touched.has(element)) {
+        const visibilityContainer = this.mergeVisibilityContainers.get(element);
+        if (visibilityContainer) this.restore(visibilityContainer);
+        this.mergeVisibilityContainers.delete(element);
+        this.restore(element);
+      }
     this.previousEventsByElement = new Map(events);
     this.previousGroupsByEvent = groupsByEvent;
   }
@@ -145,6 +164,7 @@ export class EventRenderer {
     for (const element of this.touched) this.restore(element);
     this.previousEventsByElement.clear();
     this.previousGroupsByEvent.clear();
+    this.mergeVisibilityContainers.clear();
     this.geometryByMergeKey.clear();
   }
 
@@ -187,6 +207,7 @@ export class EventRenderer {
     if (geometry) {
       this.write(element, "left", geometry.left, "important");
       this.write(element, "width", geometry.width, "important");
+      this.write(element, "top", geometry.top ?? null, "important");
     } else {
       viewAdapter?.restoreGeometry(element, (property) =>
         this.write(element, property, null, "important"),

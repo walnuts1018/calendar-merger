@@ -10,6 +10,7 @@ import {
   calendarConfidence,
   calendarFallbackKey,
   calendarOwnership,
+  decodeCalendarIdFromEventId,
   readCalendarId,
   resolveCalendarByLabel,
 } from "./identity";
@@ -385,6 +386,19 @@ export class GoogleCalendarDomAdapter {
 
   private eventCalendar(element: Element): CalendarSnapshot | null {
     const eventId = element.getAttribute("data-eventid") ?? element.getAttribute("data-event-id");
+    const decodedCalendarId = eventId ? decodeCalendarIdFromEventId(eventId) : null;
+    if (eventId && decodedCalendarId) {
+      const known = this.calendars.find(
+        (calendar) =>
+          calendar.key === `calendar:${decodedCalendarId}` && calendar.confidence !== "weak",
+      );
+      if (known) {
+        this.eventCalendarRefs.set(element, { eventId, calendarKey: known.key });
+        return known;
+      }
+      return null;
+    }
+
     const cached = this.eventCalendarRefs.get(element);
     if (eventId && cached?.eventId === eventId) {
       const known = this.calendars.find(({ key }) => key === cached.calendarKey);

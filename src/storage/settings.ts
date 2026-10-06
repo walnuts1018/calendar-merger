@@ -1,7 +1,7 @@
 import type { CalendarGroup, CalendarPreferences, VisibilityProfile } from "../domain/model";
 
 export interface Settings {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mergeEnabled: boolean;
   calendars: Record<string, CalendarPreferences>;
   groups: Record<string, CalendarGroup>;
@@ -11,7 +11,7 @@ export interface Settings {
 export const settingsStorageKey = "calendar-merger.settings";
 
 export function createDefaultSettings(): Settings {
-  return { schemaVersion: 1, mergeEnabled: true, calendars: {}, groups: {}, profiles: {} };
+  return { schemaVersion: 2, mergeEnabled: true, calendars: {}, groups: {}, profiles: {} };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -61,10 +61,7 @@ function normalizeCalendars(value: unknown): Record<string, CalendarPreferences>
   return calendars;
 }
 
-function normalizeGroups(
-  value: unknown,
-  calendars: Record<string, CalendarPreferences>,
-): Record<string, CalendarGroup> {
+function normalizeGroups(value: unknown): Record<string, CalendarGroup> {
   const source = record(value);
   const groups: Record<string, CalendarGroup> = {};
   if (!source) return groups;
@@ -73,13 +70,28 @@ function normalizeGroups(
     if (!isSafeKey(id)) continue;
     const group = record(rawGroup);
     if (!group || typeof group.name !== "string" || group.name.trim() === "") continue;
-    groups[id] = { id, name: group.name.trim(), calendarKeys: stringArray(group.calendarKeys) };
-  }
-
-  for (const preferences of Object.values(calendars)) {
-    if (preferences.groupId && !groups[preferences.groupId]) delete preferences.groupId;
+    groups[id] = { id, name: group.name.trim() };
   }
   return groups;
+}
+
+function migrateLegacyGroupMembership(
+  source: unknown,
+  calendars: Record<string, CalendarPreferences>,
+  groups: Record<string, CalendarGroup>,
+): void {
+  const legacyGroups = record(source);
+  if (!legacyGroups) return;
+
+  for (const [groupId, rawGroup] of Object.entries(legacyGroups)) {
+    if (!Object.hasOwn(groups, groupId)) continue;
+    const group = record(rawGroup);
+    for (const calendarKey of stringArray(group?.calendarKeys)) {
+      const preferences = calendars[calendarKey];
+      if (preferences && !Object.hasOwn(groups, preferences.groupId ?? ""))
+        preferences.groupId = groupId;
+    }
+  }
 }
 
 function normalizeProfiles(value: unknown): Record<string, VisibilityProfile> {
@@ -105,17 +117,28 @@ export function migrateSettings(raw: unknown): Settings {
   const source = record(raw);
   if (!source) return createDefaultSettings();
 
-  const calendars = normalizeCalendars(source.calendars);
   const schemaVersion = source.schemaVersion;
-  if (schemaVersion !== undefined && schemaVersion !== 0 && schemaVersion !== 1) {
+  if (
+    schemaVersion !== undefined &&
+    schemaVersion !== 0 &&
+    schemaVersion !== 1 &&
+    schemaVersion !== 2
+  ) {
     return createDefaultSettings();
+  }
+  const calendars = normalizeCalendars(source.calendars);
+  const groups = normalizeGroups(source.groups);
+  if (schemaVersion !== 2) migrateLegacyGroupMembership(source.groups, calendars, groups);
+  for (const preferences of Object.values(calendars)) {
+    if (preferences.groupId && !Object.hasOwn(groups, preferences.groupId))
+      delete preferences.groupId;
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mergeEnabled: typeof source.mergeEnabled === "boolean" ? source.mergeEnabled : true,
     calendars,
-    groups: normalizeGroups(source.groups, calendars),
+    groups,
     profiles: normalizeProfiles(source.profiles),
   };
 }

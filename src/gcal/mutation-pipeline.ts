@@ -2,9 +2,10 @@ export type FrameWrite = () => void;
 
 export class MutationPipeline {
   private readonly observer: MutationObserver;
-  private readonly dirtyNodes = new Set<Node>();
+  private readonly pendingRecords: MutationRecord[] = [];
   private frameHandle: number | undefined;
   private microtaskQueued = false;
+  private initialScanPending = false;
   private disposed = false;
   private lastFrameDuration = 0;
 
@@ -46,11 +47,12 @@ export class MutationPipeline {
         "data-calendar-owner",
         "data-all-day",
         "data-calendar-view",
+        "data-datekey",
         "hidden",
         "style",
       ],
     });
-    this.dirtyNodes.add(this.document.documentElement);
+    this.initialScanPending = true;
     this.queueMicrotask();
   }
 
@@ -60,7 +62,7 @@ export class MutationPipeline {
     if (this.frameHandle !== undefined)
       this.document.defaultView?.cancelAnimationFrame(this.frameHandle);
     this.frameHandle = undefined;
-    this.dirtyNodes.clear();
+    this.pendingRecords.length = 0;
   }
 
   get lastFrameDurationMs(): number {
@@ -68,8 +70,38 @@ export class MutationPipeline {
   }
 
   private collect(records: MutationRecord[]): void {
+    this.pendingRecords.push(...records);
+    this.queueMicrotask();
+  }
+
+  private queueMicrotask(): void {
+    if (this.microtaskQueued || this.disposed) return;
+    this.microtaskQueued = true;
+    queueMicrotask(() => {
+      this.microtaskQueued = false;
+      if (
+        this.disposed ||
+        this.frameHandle !== undefined ||
+        (this.pendingRecords.length === 0 && !this.initialScanPending)
+      )
+        return;
+      const window = this.document.defaultView;
+      if (!window) return;
+      this.frameHandle = window.requestAnimationFrame(() => this.flushFrame());
+    });
+  }
+
+  private flushFrame(): void {
+    this.frameHandle = undefined;
+    if (this.disposed) return;
+    const startedAt = this.document.defaultView?.performance.now() ?? 0;
+    const records = this.pendingRecords.splice(0);
+    const dirty = new Set<Node>();
+    if (this.initialScanPending) {
+      dirty.add(this.document.documentElement);
+      this.initialScanPending = false;
+    }
     const HTMLElement = this.document.defaultView?.HTMLElement;
-    const layoutRelevance = new Map<Element, boolean>();
     for (const record of records) {
       if (isExtensionOwned(record.target)) continue;
       if (
@@ -83,50 +115,25 @@ export class MutationPipeline {
       if (
         record.type === "attributes" &&
         (record.attributeName === "style" || record.attributeName === "class") &&
-        record.target.nodeType === 1
-      ) {
-        const element = record.target as Element;
-        let relevant = layoutRelevance.get(element);
-        if (relevant === undefined) {
-          relevant = this.isRelevantLayoutMutation(element);
-          layoutRelevance.set(element, relevant);
-        }
-        if (!relevant) continue;
-      }
+        record.target.nodeType === 1 &&
+        !this.isRelevantLayoutMutation(record.target as Element)
+      )
+        continue;
       const addedNodes = [...record.addedNodes].filter((node) => !isExtensionOwned(node));
       const removedNodes = [...record.removedNodes].filter((node) => !isExtensionOwned(node));
       if (record.type === "childList" && addedNodes.length === 0 && removedNodes.length === 0)
         continue;
-      this.dirtyNodes.add(record.target);
-      for (const node of addedNodes) this.dirtyNodes.add(node);
-      for (const node of removedNodes) this.dirtyNodes.add(node);
+      dirty.add(record.target);
+      for (const node of addedNodes) dirty.add(node);
+      for (const node of removedNodes) dirty.add(node);
     }
-    this.queueMicrotask();
-  }
-
-  private queueMicrotask(): void {
-    if (this.microtaskQueued || this.disposed) return;
-    this.microtaskQueued = true;
-    queueMicrotask(() => {
-      this.microtaskQueued = false;
-      if (this.disposed || this.frameHandle !== undefined || this.dirtyNodes.size === 0) return;
-      const window = this.document.defaultView;
-      if (!window) return;
-      this.frameHandle = window.requestAnimationFrame(() => this.flushFrame());
-    });
-  }
-
-  private flushFrame(): void {
-    this.frameHandle = undefined;
-    if (this.disposed) return;
-    const dirty = new Set(this.dirtyNodes);
-    this.dirtyNodes.clear();
-    const startedAt = this.document.defaultView?.performance.now() ?? 0;
-    const write = this.prepareFrame(dirty);
-    write?.();
+    if (dirty.size > 0) {
+      const write = this.prepareFrame(dirty);
+      write?.();
+    }
     const endedAt = this.document.defaultView?.performance.now() ?? startedAt;
     this.lastFrameDuration = Math.max(0, endedAt - startedAt);
-    if (this.dirtyNodes.size > 0) this.queueMicrotask();
+    if (this.pendingRecords.length > 0) this.queueMicrotask();
   }
 }
 

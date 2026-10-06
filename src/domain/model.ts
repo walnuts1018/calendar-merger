@@ -67,7 +67,6 @@ export interface EventPresentation {
 export interface CalendarGroup {
   id: string;
   name: string;
-  calendarKeys: CalendarKey[];
 }
 
 export interface VisibilityProfile {

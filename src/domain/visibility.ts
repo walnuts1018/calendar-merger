@@ -1,4 +1,4 @@
-import type { CalendarGroup, VisibilityProfile } from "./model";
+import type { VisibilityProfile } from "./model";
 
 export interface VisibilityChange {
   calendarKey: string;
@@ -18,10 +18,10 @@ export function visibilityChanges(
 }
 
 export function groupVisibilityTarget(
-  group: CalendarGroup,
+  calendarKeys: readonly string[],
   current: ReadonlyMap<string, boolean>,
 ): boolean {
-  return !group.calendarKeys.some((key) => current.get(key) === true);
+  return !calendarKeys.some((key) => current.get(key) === true);
 }
 
 export function profileVisibilityChanges(

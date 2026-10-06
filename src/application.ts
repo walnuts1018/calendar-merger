@@ -62,6 +62,10 @@ export async function mountCalendarMergerApplication(
   if (!window) return { lastMutationFrameDurationMs: 0, dispose() {} };
 
   const safeCalendars = () => calendars.filter((calendar) => calendar.confidence !== "weak");
+  const calendarKeysForGroup = (groupId: string) =>
+    Object.entries(settings.calendars)
+      .filter(([, preferences]) => preferences.groupId === groupId)
+      .map(([calendarKey]) => calendarKey);
   const visibilitySnapshot = () =>
     new Map(safeCalendars().map(({ key, visible }) => [key, visible]));
   const identitySignature = () =>
@@ -177,16 +181,14 @@ export async function mountCalendarMergerApplication(
       },
       assignGroup(calendarKey, groupId) {
         const calendar = calendars.find((entry) => entry.key === calendarKey);
-        if (!calendar || calendar.confidence === "weak" || (groupId && !settings.groups[groupId]))
+        if (
+          !calendar ||
+          calendar.confidence === "weak" ||
+          (groupId && !Object.hasOwn(settings.groups, groupId))
+        )
           return;
-        for (const group of Object.values(settings.groups)) {
-          group.calendarKeys = group.calendarKeys.filter((key) => key !== calendarKey);
-        }
         const previous = settings.calendars[calendarKey];
         if (groupId) {
-          const group = settings.groups[groupId];
-          if (group && !group.calendarKeys.includes(calendarKey))
-            group.calendarKeys.push(calendarKey);
           settings.calendars[calendarKey] = {
             opacity: previous?.opacity ?? 1,
             ...(previous?.color ? { color: previous.color } : {}),
@@ -215,11 +217,11 @@ export async function mountCalendarMergerApplication(
       },
       soloGroup(groupId) {
         const group = settings.groups[groupId];
-        if (!group) return;
+        if (!Object.hasOwn(settings.groups, groupId) || !group) return;
         const available = new Set(safeCalendars().map(({ key }) => key));
         visibility.apply(
           solo.enter(
-            new Set(group.calendarKeys.filter((key) => available.has(key))),
+            new Set(calendarKeysForGroup(groupId).filter((key) => available.has(key))),
             visibilitySnapshot(),
           ),
         );
@@ -231,11 +233,12 @@ export async function mountCalendarMergerApplication(
       },
       toggleGroup(groupId) {
         const group = settings.groups[groupId];
-        if (!group) return;
+        if (!Object.hasOwn(settings.groups, groupId) || !group) return;
         const current = visibilitySnapshot();
-        const target = groupVisibilityTarget(group, current);
+        const groupCalendarKeys = calendarKeysForGroup(groupId);
+        const target = groupVisibilityTarget(groupCalendarKeys, current);
         const desired = new Set([...current].filter(([, visible]) => visible).map(([key]) => key));
-        for (const key of group.calendarKeys) {
+        for (const key of groupCalendarKeys) {
           if (!current.has(key)) continue;
           if (target) desired.add(key);
           else desired.delete(key);
@@ -244,7 +247,7 @@ export async function mountCalendarMergerApplication(
       },
       createGroup(name) {
         const id = window.crypto.randomUUID();
-        settings.groups[id] = { id, name, calendarKeys: [] };
+        settings.groups[id] = { id, name };
         persistSettings();
         scheduleRender(true);
       },
@@ -256,18 +259,15 @@ export async function mountCalendarMergerApplication(
         scheduleRender(true);
       },
       deleteGroup(groupId) {
-        const group = settings.groups[groupId];
-        if (!group) return;
-        for (const key of group.calendarKeys) {
-          const preferences = settings.calendars[key];
-          if (preferences?.groupId === groupId) {
-            if (preferences.color || preferences.opacity !== 1) {
-              settings.calendars[key] = {
-                opacity: preferences.opacity,
-                ...(preferences.color ? { color: preferences.color } : {}),
-              };
-            } else delete settings.calendars[key];
-          }
+        if (!Object.hasOwn(settings.groups, groupId)) return;
+        for (const [key, preferences] of Object.entries(settings.calendars)) {
+          if (preferences.groupId !== groupId) continue;
+          if (preferences.color || preferences.opacity !== 1) {
+            settings.calendars[key] = {
+              opacity: preferences.opacity,
+              ...(preferences.color ? { color: preferences.color } : {}),
+            };
+          } else delete settings.calendars[key];
         }
         delete settings.groups[groupId];
         persistSettings();
@@ -313,7 +313,8 @@ export async function mountCalendarMergerApplication(
         scheduleRender(false);
       },
       spotlightGroup(groupId) {
-        const keys = groupId ? (settings.groups[groupId]?.calendarKeys ?? []) : [];
+        const keys =
+          groupId && Object.hasOwn(settings.groups, groupId) ? calendarKeysForGroup(groupId) : [];
         spotlightKeys = new Set(keys);
         scheduleRender(false);
       },

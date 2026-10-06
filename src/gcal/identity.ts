@@ -1,6 +1,13 @@
 import type { CalendarSnapshot, Confidence, CalendarOwnership } from "../domain/model";
 
 const calendarIdAttributes = ["data-calendar-id", "data-calendarid", "data-calendar-key"];
+const shortCalendarDomains: Record<string, string> = {
+  g: "group.calendar.google.com",
+  h: "holiday.calendar.google.com",
+  i: "import.calendar.google.com",
+  m: "gmail.com",
+  v: "group.v.calendar.google.com",
+};
 
 export function stableHash(value: string): string {
   let hash = 2166136261;
@@ -16,22 +23,41 @@ export function readCalendarId(element: Element): string | null {
     if (value) return value;
   }
 
+  const dataIds = new Set<string>();
   for (const node of [element, ...element.querySelectorAll("[data-id]")]) {
     const value = decodeBase64Url(node.getAttribute("data-id") ?? "");
-    if (value) return value;
+    if (value && isCalendarAddress(value)) dataIds.add(value);
   }
+  if (dataIds.size === 1) return dataIds.values().next().value ?? null;
+  if (dataIds.size > 1) return null;
 
+  const linkedIds = new Set<string>();
   for (const link of element.querySelectorAll<HTMLAnchorElement>("a[href]")) {
     try {
       const url = new URL(link.href, "https://calendar.google.com/");
       const value = url.searchParams.get("src") ?? url.searchParams.get("cid");
-      if (value) return value;
+      if (value && isCalendarAddress(value)) linkedIds.add(value);
     } catch {
       continue;
     }
   }
 
-  return null;
+  return linkedIds.size === 1 ? (linkedIds.values().next().value ?? null) : null;
+}
+
+export function decodeCalendarIdFromEventId(eventId: string): string | null {
+  const decoded = decodeBase64Url(eventId);
+  if (!decoded) return null;
+  const separator = decoded.lastIndexOf(" ");
+  if (separator <= 0 || separator === decoded.length - 1) return null;
+
+  const encodedAddress = decoded.slice(separator + 1).trim();
+  const shortDomain = /@([a-z])$/iu.exec(encodedAddress)?.[1]?.toLowerCase();
+  const domain = shortDomain ? shortCalendarDomains[shortDomain] : undefined;
+  const address = domain
+    ? `${encodedAddress.slice(0, encodedAddress.lastIndexOf("@") + 1)}${domain}`
+    : encodedAddress;
+  return isCalendarAddress(address) ? address : null;
 }
 
 function decodeBase64Url(value: string): string | null {
@@ -53,6 +79,10 @@ function decodeBase64Url(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function isCalendarAddress(value: string): boolean {
+  return /^[^\s@]+@(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z]{2,}$/iu.test(value);
 }
 
 export function calendarConfidence(element: Element, label: string, unique: boolean): Confidence {

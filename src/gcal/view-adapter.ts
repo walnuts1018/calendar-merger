@@ -7,6 +7,7 @@ export type SupportedCalendarView = Exclude<CalendarView, "unknown">;
 export interface MergedGeometry {
   left: string;
   width: string;
+  top?: string;
 }
 
 export type GeometryAssessment = { safe: true; geometry?: MergedGeometry } | { safe: false };
@@ -28,6 +29,7 @@ export interface CalendarViewAdapter {
     members: readonly CalendarEvent[],
     eventElements: ReadonlyMap<string, HTMLElement>,
   ): GeometryAssessment;
+  mergeVisibilityContainer(element: HTMLElement): HTMLElement | null;
   restoreGeometry(element: HTMLElement, restoreProperty: (property: string) => void): void;
 }
 
@@ -72,12 +74,32 @@ class SemanticCalendarViewAdapter implements CalendarViewAdapter {
     eventElements: ReadonlyMap<string, HTMLElement>,
   ): GeometryAssessment {
     if (members.some((member) => member.view !== this.view)) return { safe: false };
-    return mergedGeometry(members, eventElements);
+    return mergedGeometry(members, eventElements, this.view);
+  }
+
+  mergeVisibilityContainer(element: HTMLElement): HTMLElement | null {
+    if (this.view !== "schedule") return null;
+    const row = element.parentElement;
+    if (
+      !row ||
+      row.getAttribute("role") !== "row" ||
+      row.children.length !== 2 ||
+      ![...row.children].some(
+        (child) => child === element && child.matches("[data-eventchip][data-eventid]"),
+      ) ||
+      ![...row.children].some(
+        (child) => child !== element && child.getAttribute("role") === "gridcell",
+      ) ||
+      row.querySelectorAll("[data-eventchip][data-eventid]").length !== 1
+    )
+      return null;
+    return row;
   }
 
   restoreGeometry(_element: HTMLElement, restoreProperty: (property: string) => void): void {
     restoreProperty("left");
     restoreProperty("width");
+    restoreProperty("top");
   }
 }
 
@@ -96,6 +118,18 @@ export function createCalendarViewAdapters(): ReadonlyMap<CalendarView, Calendar
 function eventTitle(element: Element): string {
   const direct = element.getAttribute("data-event-title") ?? element.getAttribute("title");
   if (direct?.trim()) return direct.trim();
+
+  const content = element.textContent ?? "";
+  const quotedTitle = /[「“"]([^」”"]+)[」”"]/u.exec(content)?.[1]?.trim();
+  if (quotedTitle) return quotedTitle;
+
+  const visibleLines = (element as HTMLElement).innerText
+    ?.split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (visibleLines && visibleLines.length > 1 && parseTimeRange(visibleLines[0] ?? ""))
+    return visibleLines[1] ?? "";
+
   const child = element.querySelector<HTMLElement>(
     "[data-event-title], time[datetime][data-title]",
   );
@@ -131,14 +165,94 @@ function eventInterval(
   const times = element.querySelectorAll("time[datetime]");
   const startValue = element.getAttribute("data-start") ?? times[0]?.getAttribute("datetime");
   const endValue = element.getAttribute("data-end") ?? times[1]?.getAttribute("datetime");
-  if (!startValue || !endValue) return layoutInterval(element, view);
+  if (!startValue || !endValue) return semanticInterval(element, view);
 
   const start = normalizeDate(startValue);
   const end = normalizeDate(endValue);
-  if (!start || !end || Date.parse(end) <= Date.parse(start)) return layoutInterval(element, view);
+  if (!start || !end || Date.parse(end) <= Date.parse(start))
+    return semanticInterval(element, view);
   const dateOnlyInterval = !startValue.includes("T") && !endValue.includes("T");
   const allDay = element.getAttribute("data-all-day") === "true" || dateOnlyInterval;
   return { dateKey: start.slice(0, 10), start, end, allDay };
+}
+
+function semanticInterval(
+  element: Element,
+  view: SupportedCalendarView,
+): {
+  dateKey: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+} | null {
+  if (view === "day" || view === "week") return layoutInterval(element, view);
+  if (view !== "month" && view !== "schedule") return null;
+
+  const htmlElement = element as HTMLElement;
+  const content = `${htmlElement.innerText ?? ""}\n${element.textContent ?? ""}`;
+  const dateKey =
+    view === "schedule"
+      ? (element.closest("[data-datekey]")?.getAttribute("data-datekey") ?? null)
+      : localizedDateKey(content);
+  if (!dateKey) return null;
+
+  const timeRange = parseTimeRange(content);
+  if (timeRange) return { dateKey, ...timeRange, allDay: false };
+  if (/終日|all\s+day/iu.test(content))
+    return { dateKey, start: "00:00", end: "24:00", allDay: true };
+  if (view === "month" && element.hasAttribute("data-stacked-layout-chip-container"))
+    return { dateKey, start: "00:00", end: "24:00", allDay: true };
+  return null;
+}
+
+function parseTimeRange(value: string): { start: string; end: string } | null {
+  const japaneseRange =
+    /(午前|午後)?\s*(\d{1,2})(?::(\d{2}))?\s*時?\s*(?:～|〜|~|–|—|-|to)\s*(午前|午後)?\s*(\d{1,2})(?::(\d{2}))?\s*時?/giu;
+  for (const match of value.matchAll(japaneseRange)) {
+    const start = formatClock(match[2], match[3], match[1] ?? match[4]);
+    const end = formatClock(match[5], match[6], match[4] ?? match[1]);
+    if (start && end) return { start, end };
+  }
+
+  const englishRange =
+    /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*(?:to|[-–—])\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/giu;
+  for (const match of value.matchAll(englishRange)) {
+    const start = formatClock(match[1], match[2], match[3]);
+    const end = formatClock(match[4], match[5], match[6] ?? match[3]);
+    if (start && end) return { start, end };
+  }
+  return null;
+}
+
+function formatClock(
+  hourValue: string | undefined,
+  minuteValue: string | undefined,
+  periodValue: string | undefined,
+): string | null {
+  if (!hourValue) return null;
+  let hour = Number(hourValue);
+  const minute = Number(minuteValue ?? 0);
+  const period = periodValue?.toLowerCase();
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || minute > 59) return null;
+  if (period === "午前" || period === "am") hour = hour === 12 ? 0 : hour;
+  else if (period === "午後" || period === "pm") hour = hour === 12 ? 12 : hour + 12;
+  if (hour < 0 || hour > 23) return null;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function localizedDateKey(value: string): string | null {
+  const japaneseDate = /(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/u.exec(value);
+  if (japaneseDate?.[1] && japaneseDate[2] && japaneseDate[3])
+    return `${japaneseDate[1]}-${japaneseDate[2].padStart(2, "0")}-${japaneseDate[3].padStart(2, "0")}`;
+
+  const englishDate =
+    /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{4})\b/iu.exec(
+      value,
+    );
+  if (!englishDate?.[1] || !englishDate[2] || !englishDate[3]) return null;
+  const parsed = new Date(`${englishDate[1]} ${englishDate[2]}, ${englishDate[3]} UTC`);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}-${String(parsed.getUTCDate()).padStart(2, "0")}`;
 }
 
 function layoutInterval(
@@ -193,15 +307,21 @@ function eventIdentityConfidence(element: Element): CalendarEvent["eventConfiden
 function mergedGeometry(
   members: readonly CalendarEvent[],
   eventElements: ReadonlyMap<string, HTMLElement>,
+  view: SupportedCalendarView,
 ): GeometryAssessment {
   const elements = members.map((member) => eventElements.get(member.ref));
   if (elements.some((element) => !element)) return { safe: false };
   const presentElements = elements.filter((element) => element !== undefined);
   const firstElement = presentElements[0];
   if (!firstElement) return { safe: false };
+  if (view === "schedule") return scheduleRowsAreCollapsible(presentElements);
   const firstWindow = firstElement.ownerDocument.defaultView;
   if (!firstWindow) return { safe: false };
   const styles = presentElements.map((element) => firstWindow.getComputedStyle(element));
+  if (view === "month") {
+    const stacked = monthStackGeometry(presentElements, styles);
+    if (stacked) return stacked;
+  }
   const firstParent = firstElement.parentElement;
   const flowLayoutIsFullWidth =
     firstParent !== null &&
@@ -279,4 +399,67 @@ function mergedGeometry(
         first.borderRight;
   if (width <= 0) return { safe: false };
   return { safe: true, geometry: { left: `${firstLeft}px`, width: `${width}px` } };
+}
+
+function scheduleRowsAreCollapsible(elements: readonly HTMLElement[]): GeometryAssessment {
+  const rows = elements.map((element) => {
+    const row = element.parentElement;
+    const sibling =
+      row?.children.length === 2 ? [...row.children].find((child) => child !== element) : null;
+    if (
+      !row ||
+      row.getAttribute("role") !== "row" ||
+      sibling?.getAttribute("role") !== "gridcell" ||
+      row.querySelectorAll("[data-eventchip][data-eventid]").length !== 1 ||
+      element.getAttribute("data-eventid") === null
+    )
+      return null;
+    return row;
+  });
+  if (rows.some((row) => row === null) || new Set(rows).size !== rows.length)
+    return { safe: false };
+  return { safe: true };
+}
+
+function monthStackGeometry(
+  elements: readonly HTMLElement[],
+  styles: readonly CSSStyleDeclaration[],
+): GeometryAssessment | null {
+  const first = elements[0];
+  const firstStyle = styles[0];
+  if (!first || !firstStyle?.position || firstStyle.position !== "absolute") return null;
+  const parent = first.parentElement;
+  if (!parent || !first.style.left || !first.style.width) return { safe: false };
+
+  const measurements = elements.map((element, index) => ({
+    element,
+    style: styles[index],
+    left: element.offsetLeft,
+    top: element.offsetTop,
+    width: element.offsetWidth,
+    height: element.offsetHeight,
+  }));
+  if (
+    measurements.some(
+      ({ element, style, left, width, height }) =>
+        element.parentElement !== parent ||
+        !style ||
+        style.position !== "absolute" ||
+        style.transform !== "none" ||
+        element.offsetParent !== first.offsetParent ||
+        element.style.left !== first.style.left ||
+        element.style.width !== first.style.width ||
+        left !== first.offsetLeft ||
+        width !== first.offsetWidth ||
+        height !== first.offsetHeight,
+    )
+  )
+    return { safe: false };
+
+  const top = Math.min(...measurements.map((measurement) => measurement.top));
+  if (top === first.offsetTop) return { safe: true };
+  return {
+    safe: true,
+    geometry: { left: first.style.left, width: first.style.width, top: `${top}px` },
+  };
 }
