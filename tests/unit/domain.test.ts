@@ -268,7 +268,8 @@ describe("Google Calendar DOM adaptation", () => {
     list.remove();
   });
 
-  it("匿名化したGoogle Calendar週表示DOMから同色カレンダーの3予定を識別する", () => {
+  it("表示形式を含まないURLでも週表示を判定してtest予定2件を識別する", () => {
+    document.documentElement.removeAttribute("data-calendar-view");
     const viewButton = document.createElement("button");
     viewButton.setAttribute("aria-haspopup", "menu");
     viewButton.textContent = "週 arrow_drop_down";
@@ -278,13 +279,12 @@ describe("Google Calendar DOM adaptation", () => {
     const owners = [
       { id: "primary@gmail.com", encoded: "primary@m" },
       { id: "shared@example.test", encoded: "shared@example.test" },
-      { id: "third@group.calendar.google.com", encoded: "third@group.calendar.google.com" },
     ];
     const fixture = readFileSync(resolve("tests/fixtures/gcal/week-live.html"), "utf8");
     let html = fixture;
     for (const [index, owner] of owners.entries()) {
-      const calendarToken = ["PRIMARY", "SHARED", "THIRD"][index];
-      const eventToken = ["EVENT_PRIMARY", "EVENT_SHARED", "EVENT_THIRD"][index];
+      const calendarToken = ["PRIMARY", "SHARED"][index];
+      const eventToken = ["EVENT_PRIMARY", "EVENT_SHARED"][index];
       if (!calendarToken || !eventToken) continue;
       html = html.replace(`__CALENDAR_${calendarToken}__`, encode(owner.id));
       html = html.replace(
@@ -303,19 +303,17 @@ describe("Google Calendar DOM adaptation", () => {
     expect(calendars.map(({ key, confidence }) => [key, confidence])).toEqual([
       ["calendar:primary@gmail.com", "strong"],
       ["calendar:shared@example.test", "strong"],
-      ["calendar:third@group.calendar.google.com", "strong"],
     ]);
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(2);
     expect(events.map(({ title, dateKey, layoutKey }) => [title, dateKey, layoutKey])).toEqual([
-      ["Planning", "29000", "29000:1079:22"],
-      ["Planning", "29000", "29000:1079:22"],
-      ["Planning", "29000", "29000:1079:22"],
+      ["test", "28999", "28999:1055:46"],
+      ["test", "28999", "28999:1055:46"],
     ]);
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.members).toHaveLength(3);
+    expect(groups[0]?.members).toHaveLength(2);
 
     document.querySelector('[role="list"][aria-label="My calendars"]')?.remove();
-    document.querySelector('[role="gridcell"][data-datekey="29000"]')?.remove();
+    document.querySelector('[role="gridcell"][data-datekey="28999"]')?.remove();
     viewButton.remove();
   });
 
