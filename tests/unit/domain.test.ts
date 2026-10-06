@@ -308,8 +308,9 @@ describe("Google Calendar DOM adaptation", () => {
     html = html.replace("__DATE_LABEL__", "october-eighth");
     document.body.insertAdjacentHTML("beforeend", html);
 
-    const events = new GoogleCalendarDomAdapter(document).listVisibleEvents();
-    console.log("month", new GoogleCalendarDomAdapter(document).getCurrentView(), document.querySelectorAll("[data-eventchip][data-eventid]").length);
+    const monthAdapter = new GoogleCalendarDomAdapter(document);
+    const events = monthAdapter.listVisibleEvents();
+    console.log("month", monthAdapter.getCurrentView(), monthAdapter.listCalendars(), [...document.querySelectorAll("[data-eventchip][data-eventid]")].map((element) => monthAdapter.resolveEvent(element)));
     const groups = groupMergeCandidates(events);
     const timedEvents = events.filter(({ title }) => title === "Planning");
     const allDayEvents = events.filter(({ title }) => title === "Birthday");
