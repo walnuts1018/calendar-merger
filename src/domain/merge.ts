@@ -18,15 +18,19 @@ export function createMergeKey(event: CalendarEvent): string | null {
     /^(?:busy|private|予定あり)(?:$|[\s,、:：])/iu.test(title) ||
     event.view === "unknown" ||
     !event.dateKey ||
-    !event.start ||
-    !event.end ||
+    (!event.layoutKey && (!event.start || !event.end)) ||
     event.calendarConfidence === "weak" ||
     event.eventConfidence === "weak"
   ) {
     return null;
   }
 
-  return JSON.stringify([event.view, event.dateKey, event.start, event.end, event.allDay, title]);
+  return JSON.stringify([
+    event.view,
+    event.dateKey,
+    event.layoutKey ?? [event.start, event.end, event.allDay],
+    title,
+  ]);
 }
 
 export function chooseCanonicalEvent(events: readonly CalendarEvent[]): CalendarEvent | null {

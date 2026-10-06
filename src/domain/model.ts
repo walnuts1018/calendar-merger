@@ -41,6 +41,7 @@ export interface CalendarEvent {
   dateKey: string;
   start: string;
   end: string;
+  layoutKey?: string;
   allDay: boolean;
   view: CalendarView;
   domOrder: number;

@@ -16,6 +16,11 @@ export function readCalendarId(element: Element): string | null {
     if (value) return value;
   }
 
+  for (const node of [element, ...element.querySelectorAll("[data-id]")]) {
+    const value = decodeBase64Url(node.getAttribute("data-id") ?? "");
+    if (value) return value;
+  }
+
   for (const link of element.querySelectorAll<HTMLAnchorElement>("a[href]")) {
     try {
       const url = new URL(link.href, "https://calendar.google.com/");
@@ -27,6 +32,27 @@ export function readCalendarId(element: Element): string | null {
   }
 
   return null;
+}
+
+function decodeBase64Url(value: string): string | null {
+  if (!/^[\da-z_-]+$/iu.test(value)) return null;
+  try {
+    const base64 = value.replace(/-/gu, "+").replace(/_/gu, "/");
+    const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const decoded = new TextDecoder().decode(bytes);
+    let containsControlCharacter = false;
+    for (let index = 0; index < decoded.length; index += 1) {
+      const code = decoded.charCodeAt(index);
+      if (code <= 0x1f || code === 0x7f) {
+        containsControlCharacter = true;
+        break;
+      }
+    }
+    return decoded && !containsControlCharacter ? decoded : null;
+  } catch {
+    return null;
+  }
 }
 
 export function calendarConfidence(element: Element, label: string, unique: boolean): Confidence {

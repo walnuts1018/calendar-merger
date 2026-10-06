@@ -89,6 +89,29 @@ describe("Merge candidate safety", () => {
     expect(createMergeKey(event({ title: "Busy, October 6, 9:00 AM" }))).toBeNull();
   });
 
+  it("週表示の同じ日付と同じ描画時刻を持つ予定だけをまとめる", () => {
+    const first = event({ start: "", end: "", layoutKey: "28999:1055:46" });
+    const duplicate = event({
+      ref: "layout-b",
+      calendarKey: "calendar-b",
+      start: "",
+      end: "",
+      layoutKey: "28999:1055:46",
+    });
+    const differentSlot = event({
+      ref: "layout-c",
+      calendarKey: "calendar-c",
+      start: "",
+      end: "",
+      layoutKey: "28999:1060:46",
+    });
+
+    expect(groupMergeCandidates([first, duplicate, differentSlot])).toMatchObject([
+      { members: [first, duplicate] },
+    ]);
+    expect(createMergeKey(event({ start: "", end: "" }))).toBeNull();
+  });
+
   it("10件でもlinear groupingを使いmineの予定をcanonicalに選ぶ", () => {
     const duplicates = Array.from({ length: 10 }, (_, index) =>
       event({
@@ -163,6 +186,83 @@ describe("Calendar identity", () => {
     expect(calendars.map(({ confidence }) => confidence)).toEqual(["weak", "weak"]);
     expect(adapter.getCalendarToggleElement(calendars[0]?.key ?? "")).toBeNull();
     section.remove();
+  });
+});
+
+describe("Google Calendar DOM adaptation", () => {
+  it("実際のカレンダー行と週表示の予定チップから重複候補を作る", () => {
+    document.documentElement.setAttribute("data-calendar-view", "week");
+    const list = document.createElement("div");
+    list.setAttribute("role", "list");
+    list.setAttribute("aria-label", "マイカレンダー");
+    const calendarRows = [
+      { id: "primary@example.test", label: "Primary", color: "rgb(75, 153, 210)" },
+      { id: "secondary@example.test", label: "Secondary", color: "rgb(216, 86, 117)" },
+    ];
+
+    for (const calendar of calendarRows) {
+      const row = document.createElement("li");
+      row.setAttribute("role", "listitem");
+      const metadata = document.createElement("div");
+      metadata.setAttribute("data-id", btoa(calendar.id).replace(/=+$/u, ""));
+      const swatch = document.createElement("span");
+      swatch.style.backgroundColor = calendar.color;
+      swatch.style.width = "18px";
+      swatch.style.height = "18px";
+      const control = document.createElement("input");
+      control.type = "checkbox";
+      control.checked = true;
+      control.setAttribute("aria-label", calendar.label);
+      const label = document.createElement("span");
+      label.textContent = calendar.label;
+      metadata.append(swatch, control, label);
+      row.append(metadata);
+      list.append(row);
+    }
+    document.body.append(list);
+
+    const day = document.createElement("div");
+    day.setAttribute("role", "gridcell");
+    day.setAttribute("data-datekey", "28999");
+    for (const calendar of calendarRows) {
+      const event = document.createElement("div");
+      event.setAttribute("role", "button");
+      event.setAttribute("data-eventchip", "");
+      event.setAttribute("data-eventid", `${calendar.id}-event`);
+      event.style.backgroundColor = calendar.color;
+      event.style.top = "1055px";
+      event.style.height = "46px";
+      const visibleContent = document.createElement("div");
+      visibleContent.setAttribute("aria-hidden", "true");
+      const contentLines = document.createElement("div");
+      const titleLine = document.createElement("div");
+      titleLine.textContent = "Test planning";
+      const timeLine = document.createElement("div");
+      timeLine.textContent = "午後10時～11時";
+      contentLines.append(titleLine, timeLine);
+      visibleContent.append(contentLines);
+      event.append(visibleContent);
+      day.append(event);
+    }
+    document.body.append(day);
+
+    const adapter = new GoogleCalendarDomAdapter(document);
+    const calendars = adapter.listCalendars();
+    const events = adapter.listVisibleEvents();
+    const groups = groupMergeCandidates(events);
+
+    expect(calendars.map(({ key, confidence }) => [key, confidence])).toEqual([
+      ["calendar:primary@example.test", "strong"],
+      ["calendar:secondary@example.test", "strong"],
+    ]);
+    expect(events.map(({ title, dateKey, layoutKey }) => [title, dateKey, layoutKey])).toEqual([
+      ["Test planning", "28999", "28999:1055:46"],
+      ["Test planning", "28999", "28999:1055:46"],
+    ]);
+    expect(groups).toHaveLength(1);
+
+    list.remove();
+    day.remove();
   });
 });
 

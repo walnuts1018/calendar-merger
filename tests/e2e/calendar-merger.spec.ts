@@ -173,8 +173,7 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
   const weekly = page.locator(
     '[data-fixture-view="week"] [data-event-title="Weekly Design"][data-calendar-id="calendar-1"]',
   );
-  const weeklyBadge = weekly.locator(':scope > [data-gce-overlay="merge-count"]');
-  await expect(weeklyBadge).toHaveText("×3");
+  await expect(page.locator('[data-gce-overlay="merge-count"]')).toHaveCount(0);
   await expect
     .poll(() => weekly.evaluate((element) => Number.parseFloat(getComputedStyle(element).width)))
     .toBeGreaterThan(200);
@@ -203,25 +202,20 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
     .poll(() => weekly.evaluate((element) => (element as HTMLElement).style.width))
     .toBe("332px");
   await page.getByRole("button", { name: "Next period" }).click();
-  await expect(weeklyBadge).toHaveText("×3");
+  await expect(page.locator('[data-gce-overlay="merge-count"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Previous period" }).click();
-  await expect(weeklyBadge).toHaveText("×3");
+  await expect(page.locator('[data-gce-overlay="merge-count"]')).toHaveCount(0);
   const tenCalendarEvent = page.locator(
     '[data-fixture-view="week"] [data-event-title="Town Hall"][data-calendar-id="calendar-1"]',
   );
-  await expect(tenCalendarEvent.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveText(
-    "×10",
+  await expect(tenCalendarEvent.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveCount(
+    0,
   );
   await expect
     .poll(() =>
       tenCalendarEvent.evaluate((element) => Number.parseFloat(getComputedStyle(element).width)),
     )
     .toBeGreaterThan(900);
-  await expect(
-    page.locator(
-      '[data-fixture-view="week"] [data-event-title="Busy"] > [data-gce-overlay="merge-count"]',
-    ),
-  ).toHaveCount(0);
   await expect(
     page.locator(
       '[data-fixture-view="week"] [data-event-title="Weekly Design"][data-calendar-id="calendar-2"]',
@@ -231,9 +225,6 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
     '[data-fixture-view="week"] [data-event-title="Unsafe layout"]',
   );
   await expect(unsafeLayoutEvents).toHaveCount(2);
-  await expect(unsafeLayoutEvents.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveCount(
-    0,
-  );
   await expect(unsafeLayoutEvents.nth(0)).toHaveCSS("visibility", "visible");
   await expect(unsafeLayoutEvents.nth(1)).toHaveCSS("visibility", "visible");
 
@@ -258,33 +249,15 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
           : view === "schedule"
             ? "Same title"
             : "Holiday";
-    const count = view === "day" || view === "month" || view === "year" ? "×2" : "×2";
     const canonical = page.locator(
       `[data-fixture-view="${view}"] [data-event-title="${title}"][data-calendar-id="calendar-1"]`,
     );
-    await expect(canonical.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveText(count);
-    if (view === "schedule") {
-      await expect(
-        page.locator(
-          '[data-fixture-view="schedule"] [data-event-title="Same title"][data-calendar-id="calendar-3"] > [data-gce-overlay="merge-count"]',
-        ),
-      ).toHaveCount(0);
-      await expect(
-        page.locator(
-          '[data-fixture-view="schedule"] [data-event-title="Repeated"] > [data-gce-overlay="merge-count"]',
-        ),
-      ).toHaveCount(0);
-      await expect(
-        page.locator(
-          '[data-fixture-view="schedule"] [data-event-title="Another title"] > [data-gce-overlay="merge-count"]',
-        ),
-      ).toHaveCount(0);
-    }
+    await expect(canonical.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveCount(0);
   }
 
   await page.getByRole("button", { name: "week", exact: true }).click();
-  await expect(tenCalendarEvent.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveText(
-    "×10",
+  await expect(tenCalendarEvent.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveCount(
+    0,
   );
   await page.evaluate(() => {
     const event = document.querySelector<HTMLElement>(
@@ -292,8 +265,8 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
     );
     if (event) event.replaceWith(event.cloneNode(true));
   });
-  await expect(tenCalendarEvent.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveText(
-    "×10",
+  await expect(tenCalendarEvent.locator(':scope > [data-gce-overlay="merge-count"]')).toHaveCount(
+    0,
   );
 
   await page.getByRole("button", { name: mergeToggle }).click();
@@ -308,12 +281,11 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
   ).toHaveCSS("visibility", "visible");
   await page.getByRole("button", { name: mergeToggle }).click();
   await expect(page.getByRole("button", { name: mergeToggle })).toHaveText("Merge: On");
-  await expect(weeklyBadge).toHaveText("×3");
+  await expect(page.locator('[data-gce-overlay="merge-count"]')).toHaveCount(0);
   await page.evaluate(() => window.calendarMergerApp?.dispose());
   await expect(page.getByRole("button", { name: panelTrigger })).toHaveCount(0);
   await expect(weekly).toHaveCSS("width", "96px");
   await expect(weekly).toHaveCSS("background-color", "rgb(66, 133, 244)");
-  await expect(weeklyBadge).toHaveCount(0);
   await expect(
     page.locator(
       '[data-fixture-view="week"] [data-event-title="Weekly Design"][data-calendar-id="calendar-2"]',

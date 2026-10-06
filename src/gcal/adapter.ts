@@ -16,9 +16,9 @@ import {
 import { createCalendarViewAdapters } from "./view-adapter";
 
 const calendarControlSelector =
-  '[role="checkbox"][aria-label], input[type="checkbox"][aria-label], [role="switch"][aria-label]';
+  '[role="group"] [role="checkbox"][aria-label], [role="group"] input[type="checkbox"][aria-label], [role="group"] [role="switch"][aria-label], [role="list"] [role="checkbox"][aria-label], [role="list"] input[type="checkbox"][aria-label]';
 const eventSelector =
-  '[data-eventid], [data-event-id], [data-gce-event], [role="button"][aria-label]';
+  "[data-eventchip][data-eventid], [data-eventid][data-event-title], [data-event-id], [data-gce-event]";
 
 export interface Disposable {
   dispose(): void;
@@ -30,6 +30,10 @@ export class GoogleCalendarDomAdapter {
   private readonly calendarToggleElements = new Map<string, HTMLElement>();
   private readonly calendarRowElements = new Map<string, HTMLElement>();
   private readonly eventRefs = new WeakMap<Element, string>();
+  private readonly eventCalendarRefs = new WeakMap<
+    Element,
+    { eventId: string; calendarKey: string }
+  >();
   private nextEventRef = 0;
 
   constructor(
@@ -301,14 +305,24 @@ export class GoogleCalendarDomAdapter {
       .querySelector("[data-calendar-color]")
       ?.getAttribute("data-calendar-color");
     if (semantic) return semantic;
-    const colorNode = row.querySelector<HTMLElement>(
-      '[style*="background-color"], [style*="background:"]',
+    const colored = [...row.querySelectorAll<HTMLElement>("*")]
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const color = this.document.defaultView?.getComputedStyle(element).backgroundColor;
+        return {
+          area: rect.width * rect.height,
+          color,
+          small: rect.width <= 32 && rect.height <= 32,
+        };
+      })
+      .filter(
+        ({ color }) => color && color !== "transparent" && !/^rgba\(0, 0, 0, 0\)$/u.test(color),
+      );
+    const visible = colored.filter(({ area }) => area > 0);
+    const candidates = (visible.length > 0 ? visible : colored).toSorted(
+      (left, right) => Number(right.small) - Number(left.small) || left.area - right.area,
     );
-    const inlineColor = colorNode?.style.backgroundColor || colorNode?.style.background;
-    if (inlineColor) return inlineColor;
-    const computed =
-      colorNode && this.document.defaultView?.getComputedStyle(colorNode).backgroundColor;
-    return computed && computed !== "rgba(0, 0, 0, 0)" ? computed : undefined;
+    return candidates[0]?.color;
   }
 
   private calendarSectionKey(row: Element): string {
@@ -326,6 +340,13 @@ export class GoogleCalendarDomAdapter {
   }
 
   private eventCalendar(element: Element): CalendarSnapshot | null {
+    const eventId = element.getAttribute("data-eventid") ?? element.getAttribute("data-event-id");
+    const cached = this.eventCalendarRefs.get(element);
+    if (eventId && cached?.eventId === eventId) {
+      const known = this.calendars.find(({ key }) => key === cached.calendarKey);
+      if (known && known.confidence !== "weak") return known;
+    }
+
     const current = element.closest(
       "[data-calendar-id], [data-calendarid], [data-calendar-key], [data-calendar-name]",
     );
@@ -341,7 +362,29 @@ export class GoogleCalendarDomAdapter {
     }
 
     const label = element.getAttribute("data-calendar-name");
-    return label ? resolveCalendarByLabel(label, this.calendars) : null;
+    const byLabel = label ? resolveCalendarByLabel(label, this.calendars) : null;
+    if (byLabel) return byLabel;
+
+    const color = this.eventColor(element);
+    if (!color) return null;
+    const colorMatches = this.calendars.filter(
+      (calendar) =>
+        calendar.confidence !== "weak" &&
+        calendar.nativeColor &&
+        normalizeColor(calendar.nativeColor, this.document) === color,
+    );
+    const calendar = colorMatches.length === 1 ? (colorMatches[0] ?? null) : null;
+    if (eventId && calendar)
+      this.eventCalendarRefs.set(element, { eventId, calendarKey: calendar.key });
+    return calendar;
+  }
+
+  private eventColor(element: Element): string | undefined {
+    const htmlElement = element as HTMLElement;
+    const inline = htmlElement.style?.backgroundColor;
+    if (inline) return normalizeColor(inline, this.document);
+    const computed = this.document.defaultView?.getComputedStyle(htmlElement).backgroundColor;
+    return computed ? normalizeColor(computed, this.document) : undefined;
   }
 
   private eventRef(element: Element): string {
@@ -352,4 +395,10 @@ export class GoogleCalendarDomAdapter {
     }
     return ref;
   }
+}
+
+function normalizeColor(value: string, document: Document): string | undefined {
+  const probe = document.createElement("span");
+  probe.style.color = value;
+  return probe.style.color ? probe.style.color.toLowerCase() : undefined;
 }

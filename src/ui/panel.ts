@@ -39,7 +39,7 @@ export interface PanelState {
 
 const styles = `
 :host { all: initial; color: #202124; font: 13px/1.45 Arial, sans-serif; }
-.gce-shell { position: static; width: min(310px, calc(100vw - 28px)); color: #202124; pointer-events: auto; }
+.gce-shell { position: static; width: min(310px, 100%); color: #202124; pointer-events: auto; }
 .gce-trigger, .gce-panel button, .gce-panel input, .gce-panel select { font: inherit; }
 .gce-trigger { border: 0; border-radius: 20px; background: #1a73e8; color: white; padding: 9px 14px; box-shadow: 0 2px 8px #0003; cursor: pointer; }
 .gce-panel { width: 100%; max-height: min(60vh, 560px); overflow: auto; margin-top: 8px; padding: 12px; box-sizing: border-box; border: 1px solid #dadce0; border-radius: 12px; background: #fff; box-shadow: 0 6px 24px #0003; }

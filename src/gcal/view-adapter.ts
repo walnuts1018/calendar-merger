@@ -41,7 +41,7 @@ class SemanticCalendarViewAdapter implements CalendarViewAdapter {
   ): CalendarEvent | null {
     if (element.closest("[hidden]")) return null;
     const title = eventTitle(element);
-    const interval = eventInterval(element);
+    const interval = eventInterval(element, this.view);
     const calendar = context.resolveCalendar(element);
     if (!title || !interval || !calendar) return null;
 
@@ -55,6 +55,7 @@ class SemanticCalendarViewAdapter implements CalendarViewAdapter {
       dateKey: interval.dateKey,
       start: interval.start,
       end: interval.end,
+      ...(interval.layoutKey ? { layoutKey: interval.layoutKey } : {}),
       allDay: interval.allDay,
       view: this.view,
       domOrder,
@@ -93,10 +94,7 @@ export function createCalendarViewAdapters(): ReadonlyMap<CalendarView, Calendar
 }
 
 function eventTitle(element: Element): string {
-  const direct =
-    element.getAttribute("data-event-title") ??
-    element.getAttribute("title") ??
-    element.getAttribute("aria-label");
+  const direct = element.getAttribute("data-event-title") ?? element.getAttribute("title");
   if (direct?.trim()) return direct.trim();
   const child = element.querySelector<HTMLElement>(
     "[data-event-title], time[datetime][data-title]",
@@ -105,26 +103,74 @@ function eventTitle(element: Element): string {
     child?.getAttribute("data-event-title") ??
     child?.getAttribute("data-title") ??
     child?.textContent;
-  return childTitle?.trim().replace(/\s+/gu, " ") ?? "";
+  if (childTitle?.trim()) return childTitle.trim().replace(/\s+/gu, " ");
+
+  const visibleContent = element.querySelector<HTMLElement>('[aria-hidden="true"]');
+  const visibleTitleElement =
+    visibleContent?.firstElementChild?.firstElementChild ?? visibleContent?.firstElementChild;
+  const visibleTitle =
+    visibleTitleElement?.textContent?.trim() ??
+    visibleContent?.innerText
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+  if (visibleTitle) return visibleTitle;
+  return element.getAttribute("aria-label")?.trim() ?? "";
 }
 
-function eventInterval(element: Element): {
+function eventInterval(
+  element: Element,
+  view: SupportedCalendarView,
+): {
   dateKey: string;
   start: string;
   end: string;
+  layoutKey?: string;
   allDay: boolean;
 } | null {
   const times = element.querySelectorAll("time[datetime]");
   const startValue = element.getAttribute("data-start") ?? times[0]?.getAttribute("datetime");
   const endValue = element.getAttribute("data-end") ?? times[1]?.getAttribute("datetime");
-  if (!startValue || !endValue) return null;
+  if (!startValue || !endValue) return layoutInterval(element, view);
 
   const start = normalizeDate(startValue);
   const end = normalizeDate(endValue);
-  if (!start || !end || Date.parse(end) <= Date.parse(start)) return null;
+  if (!start || !end || Date.parse(end) <= Date.parse(start)) return layoutInterval(element, view);
   const dateOnlyInterval = !startValue.includes("T") && !endValue.includes("T");
   const allDay = element.getAttribute("data-all-day") === "true" || dateOnlyInterval;
   return { dateKey: start.slice(0, 10), start, end, allDay };
+}
+
+function layoutInterval(
+  element: Element,
+  view: SupportedCalendarView,
+): {
+  dateKey: string;
+  start: string;
+  end: string;
+  layoutKey: string;
+  allDay: boolean;
+} | null {
+  if (view !== "day" && view !== "week") return null;
+  const dateKey = element.closest('[role="gridcell"][data-datekey]')?.getAttribute("data-datekey");
+  const htmlElement = element as HTMLElement;
+  const top = pixelValue(htmlElement.style.top);
+  const height = pixelValue(htmlElement.style.height);
+  if (!dateKey || top === null || height === null || height <= 0) return null;
+  return {
+    dateKey,
+    start: "",
+    end: "",
+    layoutKey: `${dateKey}:${top}:${height}`,
+    allDay: false,
+  };
+}
+
+function pixelValue(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)px$/u.exec(value.trim());
+  if (!match?.[1]) return null;
+  const number = Number(match[1]);
+  return Number.isFinite(number) ? number : null;
 }
 
 function normalizeDate(value: string): string | null {

@@ -6,7 +6,7 @@ import type { ApplicationHandle } from "../src/application";
 import { mountCalendarMergerApplication } from "../src/application";
 
 const calendarSidebarSelector =
-  '[role="group"]:has([role="checkbox"][aria-label]), [role="group"]:has(input[type="checkbox"][aria-label]), [role="group"]:has([role="switch"][aria-label]), nav[aria-label*="calendar" i]:has([role="checkbox"][aria-label])';
+  '[role="list"][aria-label]:has(input[type="checkbox"][aria-label]), [role="group"]:has([role="checkbox"][aria-label]), [role="group"]:has(input[type="checkbox"][aria-label]), [role="group"]:has([role="switch"][aria-label]), nav[aria-label*="calendar" i]:has([role="checkbox"][aria-label])';
 
 export default defineContentScript({
   matches: ["https://calendar.google.com/*"],
@@ -20,7 +20,7 @@ export default defineContentScript({
       name: "calendar-merger-ui",
       position: "inline",
       anchor: calendarSidebarSelector,
-      append: "last",
+      append: "after",
       onMount(container, _shadow, shadowHost) {
         shadowHost.setAttribute("data-gce-ui", "");
         shadowHost.style.setProperty("display", "block");

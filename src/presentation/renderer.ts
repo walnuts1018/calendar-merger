@@ -131,7 +131,6 @@ export class EventRenderer {
         geometryByCanonical.get(event.ref),
         this.viewAdapters.get(event.view),
       );
-      this.decorate(element, presentation);
       this.rememberStyle(element);
     }
 
@@ -200,36 +199,6 @@ export class EventRenderer {
     this.write(element, "background-size", stripes ? "5px 100%" : null, "important");
     this.write(element, "background-position", stripes ? "left top" : null, "important");
     this.write(element, "background-repeat", stripes ? "no-repeat" : null, "important");
-  }
-
-  private decorate(element: HTMLElement, presentation: EventPresentation): void {
-    const count = presentation.mergedCount > 1 ? String(presentation.mergedCount) : null;
-    const existing = element.querySelector<HTMLElement>(
-      ':scope > [data-gce-overlay="merge-count"]',
-    );
-    if (!count) {
-      existing?.remove();
-      return;
-    }
-
-    const badge = existing ?? element.ownerDocument.createElement("span");
-    if (!existing) {
-      badge.setAttribute("data-gce-overlay", "merge-count");
-      badge.setAttribute("aria-hidden", "true");
-      element.append(badge);
-    }
-    const label = `×${count}`;
-    if (badge.textContent !== label) badge.textContent = label;
-    badge.style.setProperty("position", "absolute");
-    badge.style.setProperty("top", "2px");
-    badge.style.setProperty("right", "3px");
-    badge.style.setProperty("z-index", "1");
-    badge.style.setProperty("padding", "1px 3px");
-    badge.style.setProperty("border-radius", "8px");
-    badge.style.setProperty("background", "rgba(32, 33, 36, 0.8)");
-    badge.style.setProperty("color", "#fff");
-    badge.style.setProperty("font", "600 10px/1.2 system-ui, sans-serif");
-    badge.style.setProperty("pointer-events", "none");
   }
 
   private write(
