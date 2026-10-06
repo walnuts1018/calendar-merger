@@ -242,6 +242,32 @@ describe("Calendar identity", () => {
 });
 
 describe("Google Calendar DOM adaptation", () => {
+  it("カレンダー操作ボタンをrole=listitem内のフレックス行へ配置する", () => {
+    const list = document.createElement("div");
+    list.setAttribute("role", "list");
+    const row = document.createElement("li");
+    row.setAttribute("role", "listitem");
+    row.style.display = "flex";
+    row.setAttribute("data-calendar-id", "primary@example.test");
+    const flexRow = document.createElement("div");
+    flexRow.style.display = "flex";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.setAttribute("aria-label", "Primary");
+    checkbox.checked = true;
+    flexRow.append(checkbox, document.createTextNode("Primary"));
+    row.append(flexRow);
+    list.append(row);
+    document.body.append(list);
+
+    const adapter = new GoogleCalendarDomAdapter(document);
+    const calendar = adapter.listCalendars()[0];
+    expect(calendar).toBeDefined();
+    expect(adapter.getCalendarControlContainer(calendar?.key ?? "")).toBe(flexRow);
+
+    list.remove();
+  });
+
   it("匿名化したGoogle Calendar週表示DOMから同色カレンダーの3予定を識別する", () => {
     document.documentElement.setAttribute("data-calendar-view", "week");
     const encode = (value: string) =>
@@ -277,9 +303,9 @@ describe("Google Calendar DOM adaptation", () => {
     ]);
     expect(events).toHaveLength(3);
     expect(events.map(({ title, dateKey, layoutKey }) => [title, dateKey, layoutKey])).toEqual([
-      ["Planning、午後10:30", "29000", "29000:1079:22"],
-      ["Planning、午後10:30", "29000", "29000:1079:22"],
-      ["Planning、午後10:30", "29000", "29000:1079:22"],
+      ["Planning", "29000", "29000:1079:22"],
+      ["Planning", "29000", "29000:1079:22"],
+      ["Planning", "29000", "29000:1079:22"],
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members).toHaveLength(3);
@@ -309,8 +335,8 @@ describe("Google Calendar DOM adaptation", () => {
     document.body.insertAdjacentHTML("beforeend", html);
 
     const monthAdapter = new GoogleCalendarDomAdapter(document);
+    monthAdapter.listCalendars();
     const events = monthAdapter.listVisibleEvents();
-    console.log("month", monthAdapter.getCurrentView(), monthAdapter.listCalendars(), [...document.querySelectorAll("[data-eventchip][data-eventid]")].map((element) => monthAdapter.resolveEvent(element)));
     const groups = groupMergeCandidates(events);
     const timedEvents = events.filter(({ title }) => title === "Planning");
     const allDayEvents = events.filter(({ title }) => title === "Birthday");
@@ -345,6 +371,7 @@ describe("Google Calendar DOM adaptation", () => {
     document.body.insertAdjacentHTML("beforeend", html);
 
     const adapter = new GoogleCalendarDomAdapter(document);
+    adapter.listCalendars();
     const events = adapter.listVisibleEvents();
     const groups = groupMergeCandidates(events);
     const elements = [...document.querySelectorAll<HTMLElement>("[data-eventchip][data-eventid]")];

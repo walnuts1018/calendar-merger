@@ -314,13 +314,16 @@ export class GoogleCalendarDomAdapter {
   private calendarControlContainer(control: Element, row: HTMLElement): HTMLElement | null {
     const window = this.document.defaultView;
     if (!window) return row;
-    const rowDisplay = window.getComputedStyle(row).display;
-    if (rowDisplay === "flex" || rowDisplay === "inline-flex") return row;
-
-    const child = [...row.children].find((candidate) => candidate.contains(control));
-    if (!(child instanceof HTMLElement)) return row;
-    const childDisplay = window.getComputedStyle(child).display;
-    return childDisplay === "flex" || childDisplay === "inline-flex" ? child : row;
+    let flexContainer: HTMLElement | null = null;
+    for (
+      let candidate = control.parentElement;
+      candidate && candidate !== row;
+      candidate = candidate.parentElement
+    ) {
+      const display = window.getComputedStyle(candidate).display;
+      if (display === "flex" || display === "inline-flex") flexContainer = candidate;
+    }
+    return flexContainer ?? row;
   }
 
   private calendarPanelContainer(row: HTMLElement): HTMLElement {
