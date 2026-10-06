@@ -1,4 +1,10 @@
-import { defineConfig } from 'wxt';
+import { defineConfig } from "wxt";
 
-// See https://wxt.dev/api/config.html
-export default defineConfig({});
+export default defineConfig({
+  manifest: {
+    name: "Calendar Merger",
+    description: "Google Calendarの表示とカレンダー設定を拡張します。",
+    permissions: ["storage"],
+    host_permissions: [],
+  },
+});

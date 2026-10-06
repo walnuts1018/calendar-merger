@@ -1,0 +1,19 @@
+[tools]
+node = "24.21.0"
+pnpm = "11.28.2"
+
+[tasks.install]
+description = "依存パッケージをlockfileに従ってインストールする"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.format]
+description = "Oxfmtでソースコードを整形する"
+run = "pnpm fmt"
+
+[tasks.verify]
+description = "整形、lint、型検査、unit/E2Eテスト、production buildを実行する"
+run = "pnpm check"
+
+[tasks.package]
+description = "Chrome拡張機能の配布用zipを作成する"
+run = "pnpm zip"

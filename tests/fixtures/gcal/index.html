@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja" data-theme="light" data-calendar-view="week">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Calendar Merger fixture</title>
+    <style>
+      :root {
+        font-family: Arial, sans-serif;
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 16px;
+      }
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        background: #202124;
+        color: #e8eaed;
+      }
+      #calendar-sidebar {
+        border: 1px solid #888;
+        padding: 8px;
+      }
+      [data-fixture-calendar-row] {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 3px;
+      }
+      [data-fixture-color] {
+        width: 12px;
+        height: 12px;
+        display: inline-block;
+      }
+      #calendar-grid {
+        display: grid;
+        gap: 8px;
+      }
+      [data-fixture-view] {
+        min-height: 260px;
+        border: 1px solid #888;
+        padding: 8px;
+      }
+      [data-eventid] {
+        display: block;
+        width: 100%;
+        min-width: 220px;
+        min-height: 32px;
+        margin: 4px;
+        border: 1px solid #777;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <div
+        id="calendar-sidebar"
+        role="group"
+        aria-label="My calendars"
+        data-calendar-section="fixture-list"
+      ></div>
+      <div aria-label="Fixture controls">
+        <button type="button" data-theme-toggle>Toggle theme</button>
+        <button type="button" data-fixture-rerender-sidebar>Rerender sidebar</button>
+        <button type="button" data-fixture-add-calendar>Add calendar</button>
+        <button type="button" data-fixture-next-period>Next period</button>
+        <button type="button" data-fixture-previous-period>Previous period</button>
+        <div id="view-controls"></div>
+      </div>
+    </aside>
+    <main id="calendar-grid"></main>
+    <calendar-merger-ui id="extension-host"></calendar-merger-ui>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
