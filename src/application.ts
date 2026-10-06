@@ -1,5 +1,5 @@
 import type { CalendarEvent } from "./domain/model";
-import type { LocalStorageArea } from "./storage/settings";
+import type { LocalStorageArea, StorageChangeEvent } from "./storage/settings";
 import type { PanelActions } from "./ui/panel";
 
 import { normalizeOpacity } from "./domain/appearance";
@@ -14,7 +14,15 @@ import { MutationPipeline } from "./gcal/mutation-pipeline";
 import { NativeCalendarVisibilityController } from "./gcal/native-visibility";
 import { createCalendarViewAdapters } from "./gcal/view-adapter";
 import { EventRenderer } from "./presentation/renderer";
-import { createDefaultSettings, migrateSettings, SettingsRepository } from "./storage/settings";
+import {
+  calendarKeyFromSettingsStorageKey,
+  calendarSettingsStorageKey,
+  createDefaultSettings,
+  isSettingsStorageKey,
+  migrateSettings,
+  SettingsRepository,
+  settingsStorageKey,
+} from "./storage/settings";
 import { mountCalendarRowControls } from "./ui/calendar-controls";
 import { mountPanel } from "./ui/panel";
 
@@ -28,10 +36,16 @@ export async function mountCalendarMergerApplication(
   uiContainer: HTMLElement,
   storage: LocalStorageArea,
 ): Promise<ApplicationHandle> {
+  const window = document.defaultView;
+  if (!window) return { lastMutationFrameDurationMs: 0, dispose() {} };
+
   const repository = new SettingsRepository(storage);
-  let settings = await repository.load().catch(() => createDefaultSettings());
   const viewAdapters = createCalendarViewAdapters();
   const adapter = new GoogleCalendarDomAdapter(document, viewAdapters);
+  let calendars = adapter.listCalendars();
+  let settings = await repository
+    .load(calendars.filter(({ confidence }) => confidence !== "weak").map(({ key }) => key))
+    .catch(() => createDefaultSettings());
   const renderer = new EventRenderer(viewAdapters);
   const visibility = new NativeCalendarVisibilityController(adapter);
   const solo = new SoloVisibilityTransaction();
@@ -48,7 +62,6 @@ export async function mountCalendarMergerApplication(
       update(): void;
     }
   >();
-  let calendars = adapter.listCalendars();
   let currentView = adapter.getCurrentView();
   let panelOpen = false;
   let spotlightKeys = new Set<string>();
@@ -58,9 +71,6 @@ export async function mountCalendarMergerApplication(
   let pendingRender = false;
   let writeQueue = Promise.resolve();
   const lifecycle = new AbortController();
-  const window = document.defaultView;
-  if (!window) return { lastMutationFrameDurationMs: 0, dispose() {} };
-
   const safeCalendars = () => calendars.filter((calendar) => calendar.confidence !== "weak");
   const calendarKeysForGroup = (groupId: string) =>
     Object.entries(settings.calendars)
@@ -412,7 +422,28 @@ export async function mountCalendarMergerApplication(
       const dirtyEvents = new Set(adapter.resolveDirtyEventElements(dirty));
       const renderAll = fullScan || viewChanged || calendarChanged;
 
-      if (calendarChanged) calendars = adapter.listCalendars();
+      if (calendarChanged) {
+        const previousKeys = new Set(safeCalendars().map(({ key }) => key));
+        calendars = adapter.listCalendars();
+        const newlyDiscoveredKeys = calendars
+          .filter(({ confidence, key }) => confidence !== "weak" && !previousKeys.has(key))
+          .map(({ key }) => key);
+        if (newlyDiscoveredKeys.length > 0) {
+          void repository
+            .loadCalendarSettings(newlyDiscoveredKeys)
+            .then((latestSettings) => {
+              if (lifecycle.signal.aborted) return;
+              for (const key of newlyDiscoveredKeys) {
+                const preferences = latestSettings.calendars[key];
+                if (preferences) settings.calendars[key] = preferences;
+                else delete settings.calendars[key];
+              }
+              renderPanel();
+              scheduleRender(false);
+            })
+            .catch(() => undefined);
+        }
+      }
       const calendarIdentityChanged = previousIdentity !== identitySignature();
       if (renderAll || calendarIdentityChanged || dirtyEvents.size > 0)
         renderer.invalidateGeometry();
@@ -457,6 +488,66 @@ export async function mountCalendarMergerApplication(
 
   renderPanel();
   pipeline.start();
+
+  const chromeWindow = window as Window & {
+    chrome?: { storage?: { onChanged?: StorageChangeEvent } };
+  };
+  const storageChanged = chromeWindow.chrome?.storage?.onChanged;
+  const pendingStorageKeys = new Set<string>();
+  let storageRefreshScheduled = false;
+  const refreshSettingsFromStorage = () => {
+    if (storageRefreshScheduled) return;
+    storageRefreshScheduled = true;
+    queueMicrotask(() => {
+      storageRefreshScheduled = false;
+      const changedKeys = [...pendingStorageKeys];
+      pendingStorageKeys.clear();
+      if (changedKeys.length === 0 || lifecycle.signal.aborted) return;
+
+      void repository
+        .refreshChangedKeys(changedKeys)
+        .then((latestSettings) => {
+          if (lifecycle.signal.aborted) return;
+          const updated = migrateSettings(settings);
+          for (const key of changedKeys) {
+            if (key === settingsStorageKey) {
+              updated.mergeEnabled = latestSettings.mergeEnabled;
+              updated.groups = latestSettings.groups;
+              updated.profiles = latestSettings.profiles;
+              continue;
+            }
+            const calendarKey = calendarKeyFromSettingsStorageKey(key);
+            if (!calendarKey) continue;
+            const preferences = latestSettings.calendars[calendarKey];
+            if (preferences) updated.calendars[calendarKey] = preferences;
+            else delete updated.calendars[calendarKey];
+          }
+          settings = migrateSettings(updated);
+          panelSignature = "";
+          renderPanel();
+          scheduleRender(false);
+          if (pendingStorageKeys.size > 0) refreshSettingsFromStorage();
+        })
+        .catch(() => {
+          if (pendingStorageKeys.size > 0) refreshSettingsFromStorage();
+        });
+    });
+  };
+  const onStorageChanged = (changes: Record<string, unknown>, areaName: string) => {
+    if (areaName !== "local") return;
+    for (const key of Object.keys(changes))
+      if (isSettingsStorageKey(key)) pendingStorageKeys.add(key);
+    if (pendingStorageKeys.size > 0) refreshSettingsFromStorage();
+  };
+  storageChanged?.addListener(onStorageChanged);
+  lifecycle.signal.addEventListener(
+    "abort",
+    () => storageChanged?.removeListener(onStorageChanged),
+    { once: true },
+  );
+  pendingStorageKeys.add(settingsStorageKey);
+  for (const { key } of safeCalendars()) pendingStorageKeys.add(calendarSettingsStorageKey(key));
+  refreshSettingsFromStorage();
 
   return {
     get lastMutationFrameDurationMs() {

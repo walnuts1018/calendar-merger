@@ -34,7 +34,7 @@ const extensionHost = document.querySelector<HTMLElement>("#extension-host");
 if (!sidebar || !grid || !viewControls || !extensionHost)
   throw new Error("Fixture containers are missing.");
 
-for (const calendar of calendars) {
+function createCalendarRow(calendar: (typeof calendars)[number], visible = true): HTMLElement {
   const row = document.createElement("div");
   row.setAttribute("role", "listitem");
   row.setAttribute("data-fixture-calendar-row", "");
@@ -51,11 +51,29 @@ for (const calendar of calendars) {
   toggle.type = "button";
   toggle.setAttribute("role", "checkbox");
   toggle.setAttribute("aria-label", calendar.name);
-  toggle.setAttribute("aria-checked", "true");
+  toggle.setAttribute("aria-checked", String(visible));
   toggle.setAttribute("data-fixture-calendar-toggle", calendar.id);
   toggle.textContent = calendar.name;
   row.append(color, toggle);
-  sidebar.append(row);
+  return row;
+}
+
+for (const calendar of calendars) sidebar.append(createCalendarRow(calendar));
+
+function renderNativeSidebar(): void {
+  const current = document.querySelector<HTMLElement>("#calendar-sidebar");
+  if (!current) return;
+
+  const visibility = new Map(
+    [...current.querySelectorAll<HTMLElement>("[data-fixture-calendar-toggle]")].map((toggle) => [
+      toggle.dataset.fixtureCalendarToggle ?? "",
+      toggle.getAttribute("aria-checked") === "true",
+    ]),
+  );
+  const replacement = current.cloneNode(false) as HTMLElement;
+  for (const calendar of calendars)
+    replacement.append(createCalendarRow(calendar, visibility.get(calendar.id) ?? true));
+  current.replaceWith(replacement);
 }
 
 document.addEventListener("click", (event) => {
@@ -65,29 +83,14 @@ document.addEventListener("click", (event) => {
 });
 
 document.querySelector("[data-fixture-rerender-sidebar]")?.addEventListener("click", () => {
-  const current = document.querySelector<HTMLElement>("#calendar-sidebar");
-  if (current) current.replaceWith(current.cloneNode(true));
+  renderNativeSidebar();
 });
 
 document.querySelector("[data-fixture-add-calendar]")?.addEventListener("click", () => {
   const current = document.querySelector<HTMLElement>("#calendar-sidebar");
-  if (!current || current.querySelector('[data-calendar-id="calendar-11"]')) return;
-  const row = current.firstElementChild?.cloneNode(true);
-  if (!(row instanceof HTMLElement)) return;
-  const color = "#607d8b";
-  row.setAttribute("data-calendar-id", "calendar-11");
-  row.setAttribute("data-calendar-owner", "unknown");
-  row.querySelector("[data-calendar-color]")?.setAttribute("data-calendar-color", color);
-  const chip = row.querySelector<HTMLElement>("[data-fixture-color]");
-  if (chip) chip.style.backgroundColor = color;
-  const toggle = row.querySelector<HTMLElement>("[data-fixture-calendar-toggle]");
-  if (toggle) {
-    toggle.setAttribute("aria-label", "Calendar K");
-    toggle.setAttribute("aria-checked", "true");
-    toggle.setAttribute("data-fixture-calendar-toggle", "calendar-11");
-    toggle.textContent = "Calendar K";
-  }
-  current.append(row);
+  if (!current || calendars.some(({ id }) => id === "calendar-11")) return;
+  calendars.push({ id: "calendar-11", name: "Calendar K", color: "#607d8b" });
+  renderNativeSidebar();
 });
 
 for (const [selector, amount] of [

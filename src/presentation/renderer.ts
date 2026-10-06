@@ -192,6 +192,20 @@ export class EventRenderer {
     geometry: MergedGeometry | undefined,
     viewAdapter: CalendarViewAdapter | undefined,
   ): void {
+    this.write(element, "color", null, "important");
+    const nativeForeground =
+      element.ownerDocument.defaultView?.getComputedStyle(element).color ?? "";
+    const foreground = hasAppearanceOverride
+      ? readableForegroundColor(
+          nativeForeground,
+          presentation.backgroundColor,
+          presentation.backgroundOpacity,
+          resolveBackdropColor(element),
+          presentation.spotlightFactor,
+        )
+      : null;
+    this.write(element, "color", foreground, "important");
+
     const color = hasAppearanceOverride
       ? toRgba(presentation.backgroundColor, presentation.backgroundOpacity)
       : null;
@@ -284,21 +298,10 @@ export class EventRenderer {
 }
 
 function toRgba(color: string, opacity: number): string | null {
-  const hex = /^#([\da-f]{3}|[\da-f]{6})$/iu.exec(color.trim());
-  if (hex) {
-    const raw = hex[1] ?? "";
-    const normalized = raw.length === 3 ? raw.replace(/./gu, (part) => `${part}${part}`) : raw;
-    const channels = normalized.match(/[\da-f]{2}/giu)?.map((part) => Number.parseInt(part, 16));
-    if (channels?.length === 3)
-      return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${opacity})`;
-  }
-
-  const rgb =
-    /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*[\d.]+)?\s*\)$/iu.exec(
-      color.trim(),
-    );
-  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${opacity})`;
-  return null;
+  const parsed = parseColor(color);
+  if (!parsed) return null;
+  const alpha = clampOpacity(opacity) * parsed.alpha;
+  return `rgba(${parsed.red}, ${parsed.green}, ${parsed.blue}, ${alpha})`;
 }
 
 function stripeGradient(colors: readonly string[]): string | null {
@@ -311,4 +314,159 @@ function stripeGradient(colors: readonly string[]): string | null {
       `${color} ${(index / rgbaColors.length) * 100}% ${((index + 1) / rgbaColors.length) * 100}%`,
   );
   return `linear-gradient(to bottom, ${stops.join(", ")})`;
+}
+
+interface ParsedColor {
+  red: number;
+  green: number;
+  blue: number;
+  alpha: number;
+}
+
+const contrastThreshold = 4.5;
+const darkForeground = "#202124";
+const lightForeground = "#f8f9fa";
+
+export function readableForegroundColor(
+  currentForeground: string,
+  backgroundColor: string,
+  backgroundOpacity: number,
+  backdropColor: string,
+  elementOpacity = 1,
+): string | null {
+  const backdrop = parseColor(backdropColor);
+  if (!backdrop) return darkForeground;
+
+  const background = parseColor(backgroundColor);
+  if (!background) return bestForeground(backdrop, elementOpacity);
+
+  const backgroundAlpha = clampOpacity(backgroundOpacity) * background.alpha;
+  const eventBackground = composite(background, backgroundAlpha, backdrop);
+  const visibleBackground = composite(eventBackground, elementOpacity, backdrop);
+  const foreground = parseColor(currentForeground);
+  if (foreground) {
+    const foregroundOnEvent = composite(foreground, foreground.alpha, eventBackground);
+    const visibleForeground = composite(foregroundOnEvent, elementOpacity, backdrop);
+    if (contrastRatio(visibleForeground, visibleBackground) >= contrastThreshold) return null;
+  }
+
+  return bestForeground(eventBackground, elementOpacity, backdrop);
+}
+
+function bestForeground(
+  eventBackground: ParsedColor,
+  elementOpacity = 1,
+  backdrop = eventBackground,
+): string {
+  const dark = parseColor(darkForeground);
+  const light = parseColor(lightForeground);
+  if (!dark || !light) return darkForeground;
+  const visibleBackground = composite(eventBackground, elementOpacity, backdrop);
+  const darkRatio = contrastRatio(
+    composite(composite(dark, dark.alpha, eventBackground), elementOpacity, backdrop),
+    visibleBackground,
+  );
+  const lightRatio = contrastRatio(
+    composite(composite(light, light.alpha, eventBackground), elementOpacity, backdrop),
+    visibleBackground,
+  );
+  return darkRatio >= lightRatio ? darkForeground : lightForeground;
+}
+
+function resolveBackdropColor(element: HTMLElement): string {
+  const document = element.ownerDocument;
+  const window = document.defaultView;
+  const darkMode = document.documentElement.getAttribute("data-theme")?.toLowerCase() === "dark";
+  const fallback = darkMode ? "#202124" : "#ffffff";
+  const base = parseColor(fallback);
+  if (!window || !base) return fallback;
+
+  const layers: ParsedColor[] = [];
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = window.getComputedStyle(ancestor);
+    if (style.backgroundImage && style.backgroundImage !== "none") return fallback;
+
+    const background = parseColor(style.backgroundColor);
+    if (!background) {
+      if (style.backgroundColor && style.backgroundColor !== "transparent") return fallback;
+    } else if (background.alpha > 0) {
+      layers.push(background);
+      if (background.alpha >= 1) break;
+    }
+    if (ancestor === document.documentElement) break;
+  }
+
+  let resolved = base;
+  for (const layer of layers.toReversed()) resolved = composite(layer, layer.alpha, resolved);
+  return `rgb(${Math.round(resolved.red)}, ${Math.round(resolved.green)}, ${Math.round(resolved.blue)})`;
+}
+
+function parseColor(value: string): ParsedColor | null {
+  const normalized = value.trim().toLowerCase();
+  const hex = /^#([\da-f]{3}|[\da-f]{6})$/u.exec(normalized);
+  if (hex) {
+    const raw = hex[1] ?? "";
+    const digits = raw.length === 3 ? raw.replace(/./gu, (part) => `${part}${part}`) : raw;
+    const channels = digits.match(/[\da-f]{2}/gu)?.map((part) => Number.parseInt(part, 16));
+    if (channels?.length === 3)
+      return { red: channels[0] ?? 0, green: channels[1] ?? 0, blue: channels[2] ?? 0, alpha: 1 };
+  }
+
+  const rgb =
+    /^rgba?\(\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?(?:\s*,\s*([\d.]+)(%)?)?\s*\)$/u.exec(
+      normalized,
+    );
+  if (!rgb) return null;
+  const components = [
+    [rgb[1], rgb[2]],
+    [rgb[3], rgb[4]],
+    [rgb[5], rgb[6]],
+  ].map(([component, unit]) => {
+    const value = Number(component);
+    return unit === "%" ? (value * 255) / 100 : value;
+  });
+  const alpha =
+    rgb[7] === undefined ? 1 : clampOpacity(Number(rgb[7]) / (rgb[8] === "%" ? 100 : 1));
+  if (components.some((component) => !Number.isFinite(component))) return null;
+  return {
+    red: clampChannel(components[0] ?? 0),
+    green: clampChannel(components[1] ?? 0),
+    blue: clampChannel(components[2] ?? 0),
+    alpha,
+  };
+}
+
+function clampOpacity(opacity: number): number {
+  return Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1;
+}
+
+function clampChannel(channel: number): number {
+  return Math.min(255, Math.max(0, channel));
+}
+
+function composite(foreground: ParsedColor, opacity: number, backdrop: ParsedColor): ParsedColor {
+  const alpha = clampOpacity(opacity);
+  return {
+    red: foreground.red * alpha + backdrop.red * (1 - alpha),
+    green: foreground.green * alpha + backdrop.green * (1 - alpha),
+    blue: foreground.blue * alpha + backdrop.blue * (1 - alpha),
+    alpha: 1,
+  };
+}
+
+function contrastRatio(left: ParsedColor, right: ParsedColor): number {
+  const leftLuminance = relativeLuminance(left);
+  const rightLuminance = relativeLuminance(right);
+  return (
+    (Math.max(leftLuminance, rightLuminance) + 0.05) /
+    (Math.min(leftLuminance, rightLuminance) + 0.05)
+  );
+}
+
+function relativeLuminance(color: ParsedColor): number {
+  const channels = [color.red, color.green, color.blue].map((channel) => {
+    const linear = channel / 255;
+    return linear <= 0.04045 ? linear / 12.92 : ((linear + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * (channels[0] ?? 0) + 0.7152 * (channels[1] ?? 0) + 0.0722 * (channels[2] ?? 0);
 }

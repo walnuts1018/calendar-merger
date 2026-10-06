@@ -6,6 +6,7 @@ import type {
 } from "../domain/model";
 import type { CalendarViewAdapter } from "./view-adapter";
 
+import { calendarControlSelector, findCalendarListRoot } from "./calendar-root";
 import {
   calendarConfidence,
   calendarFallbackKey,
@@ -16,8 +17,6 @@ import {
 } from "./identity";
 import { createCalendarViewAdapters } from "./view-adapter";
 
-const calendarControlSelector =
-  '[role="group"] [role="checkbox"][aria-label], [role="group"] input[type="checkbox"][aria-label], [role="group"] [role="switch"][aria-label], [role="list"] [role="checkbox"][aria-label], [role="list"] input[type="checkbox"][aria-label]';
 const eventSelector =
   "[data-eventchip][data-eventid], [data-eventid][data-event-title], [data-event-id], [data-gce-event]";
 
@@ -30,6 +29,7 @@ export class GoogleCalendarDomAdapter {
   private readonly calendarControls = new WeakMap<Element, CalendarSnapshot>();
   private readonly calendarToggleElements = new Map<string, HTMLElement>();
   private readonly calendarRowElements = new Map<string, HTMLElement>();
+  private calendarListRoot: HTMLElement | null = null;
   private readonly calendarControlContainers = new Map<string, HTMLElement>();
   private readonly calendarPanelContainers = new Map<string, HTMLElement>();
   private readonly eventRefs = new WeakMap<Element, string>();
@@ -48,7 +48,17 @@ export class GoogleCalendarDomAdapter {
   ) {}
 
   observeCalendars(callback: (dirty: ReadonlySet<Node>) => void): Disposable {
-    return this.observe(callback, ["aria-label", "aria-checked", "checked"]);
+    return this.observe(callback, [
+      "aria-label",
+      "aria-labelledby",
+      "aria-checked",
+      "checked",
+      "data-calendar-id",
+      "data-calendarid",
+      "data-calendar-key",
+      "data-id",
+      "role",
+    ]);
   }
 
   observeEvents(callback: (dirty: ReadonlySet<Node>) => void): Disposable {
@@ -73,7 +83,13 @@ export class GoogleCalendarDomAdapter {
   }
 
   listCalendars(): CalendarSnapshot[] {
-    const controls = [...this.document.querySelectorAll<HTMLElement>(calendarControlSelector)];
+    const root = findCalendarListRoot(this.document);
+    this.calendarListRoot = root;
+    const controls = root
+      ? [...root.querySelectorAll<HTMLElement>(calendarControlSelector)].filter((control) =>
+          control.closest('[role="listitem"], [role="treeitem"]'),
+        )
+      : [];
     const bases = controls.map((control) => {
       const row = this.calendarRow(control);
       if (!row) return null;
@@ -184,7 +200,12 @@ export class GoogleCalendarDomAdapter {
   }
 
   hasCalendarChanges(dirty: ReadonlySet<Node>): boolean {
-    return this.dirtyElements(dirty, calendarControlSelector).length > 0;
+    const root = findCalendarListRoot(this.document);
+    if (root !== this.calendarListRoot) return true;
+    if (!root) return false;
+    return this.dirtyElements(dirty, calendarControlSelector).some((control) =>
+      root.contains(control),
+    );
   }
 
   resolveDirtyEventElements(dirty: ReadonlySet<Node>): HTMLElement[] {

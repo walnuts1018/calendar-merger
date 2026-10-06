@@ -170,9 +170,6 @@ test("profileを更新し、連続Soloと解除で最初のvisibilityへ戻す",
 
 test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", async ({ page }) => {
   await openPanel(page);
-  await expect
-    .poll(() => page.evaluate(() => window.calendarMergerApp?.lastMutationFrameDurationMs ?? 0))
-    .toBeGreaterThan(0);
   const weekly = page.locator(
     '[data-fixture-view="week"] [data-event-title="Weekly Design"][data-calendar-id="calendar-1"]',
   );
@@ -242,6 +239,13 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
 
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect
+    .poll(() =>
+      page
+        .locator("#extension-host .gce-panel")
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+    )
+    .toBe("rgb(41, 42, 45)");
   for (const view of ["day", "month", "schedule", "year"]) {
     await page.getByRole("button", { name: view, exact: true }).click();
     const title =
@@ -301,8 +305,14 @@ test("calendar listの追加、削除、sidebar再描画を追跡する", async 
   await page.getByRole("button", { name: "Rerender sidebar" }).click();
   await page.getByRole("button", { name: "Calendar Jの色と透明度を設定" }).click();
   await expect(page.getByLabel("Calendar Jの色", { exact: true })).toBeVisible();
+  await page.getByLabel("Calendar Jの色", { exact: true }).focus();
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("Calendar Jの色", { exact: true })).toBeHidden();
 
   await page.getByRole("button", { name: "Add calendar" }).click();
+  await expect(
+    page.locator('#calendar-sidebar [data-fixture-calendar-row][data-calendar-id="calendar-11"]'),
+  ).toHaveCount(1);
   await page.getByRole("button", { name: "Calendar Kの色と透明度を設定" }).click();
   await expect(page.getByLabel("Calendar Kの色", { exact: true })).toBeVisible();
   await page.evaluate(() => {

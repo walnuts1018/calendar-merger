@@ -25,23 +25,25 @@ interface ControlPanelRegistration {
 const controlPanelRegistries = new WeakMap<Document, ControlPanelRegistry>();
 
 const triggerStyles = `
-:host { all: initial; display: inline-flex; flex: none; vertical-align: middle; color: #202124; font: 12px/1.4 Arial, sans-serif; }
+:host { all: initial; --gce-text: #202124; --gce-surface: #fff; --gce-input: #fff; --gce-border: #dadce0; --gce-focus: #1a73e8; --gce-ring: #fff; display: inline-flex; flex: none; vertical-align: middle; color-scheme: light; color: var(--gce-text); font: 12px/1.4 Arial, sans-serif; }
+:host-context(html[data-theme="dark"]) { --gce-text: #e8eaed; --gce-surface: #292a2d; --gce-input: #202124; --gce-border: #5f6368; --gce-focus: #8ab4f8; --gce-ring: #202124; color-scheme: dark; }
 button { cursor: pointer; font: inherit; }
-.trigger { width: 18px; height: 18px; margin-inline-start: 2px; padding: 0; border: 1px solid #dadce0; border-radius: 50%; background: var(--gce-color); box-shadow: inset 0 0 0 2px #fff; }
-button:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+.trigger { width: 18px; height: 18px; margin-inline-start: 2px; padding: 0; border: 1px solid var(--gce-border); border-radius: 50%; background: var(--gce-color); box-shadow: inset 0 0 0 2px var(--gce-ring); }
+button:focus-visible { outline: 2px solid var(--gce-focus); outline-offset: 2px; }
 `;
 
 const panelStyles = `
-:host { all: initial; display: block; width: calc(100% - 8px); margin: 0 0 6px 8px; box-sizing: border-box; color: #202124; font: 12px/1.4 Arial, sans-serif; }
+:host { all: initial; --gce-text: #202124; --gce-muted: #5f6368; --gce-surface: #fff; --gce-input: #fff; --gce-border: #dadce0; --gce-focus: #1a73e8; display: block; width: calc(100% - 8px); margin: 0 0 6px 8px; box-sizing: border-box; color-scheme: light; color: var(--gce-text); font: 12px/1.4 Arial, sans-serif; }
+:host-context(html[data-theme="dark"]) { --gce-text: #e8eaed; --gce-muted: #bdc1c6; --gce-surface: #292a2d; --gce-input: #202124; --gce-border: #5f6368; --gce-focus: #8ab4f8; color-scheme: dark; }
 :host([hidden]) { display: none !important; }
 button, input { font: inherit; }
 button { cursor: pointer; }
-.controls-panel { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #dadce0; border-radius: 8px; background: #fff; box-shadow: 0 2px 8px #0002; }
+.controls-panel { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--gce-border); border-radius: 8px; background: var(--gce-surface); color: var(--gce-text); box-shadow: 0 2px 8px #0002; }
 label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 9px; }
 input[type=color] { width: 38px; height: 28px; padding: 1px; }
 input[type=range] { width: 125px; }
-.reset, .solo { min-height: 28px; padding: 4px 8px; border: 1px solid #dadce0; border-radius: 5px; background: #fff; }
-button:focus-visible, input:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+.reset, .solo { min-height: 28px; padding: 4px 8px; border: 1px solid var(--gce-border); border-radius: 5px; background: var(--gce-input); color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--gce-focus); outline-offset: 2px; }
 `;
 
 export function mountCalendarRowControls(

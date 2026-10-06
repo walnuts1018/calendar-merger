@@ -38,17 +38,18 @@ export interface PanelState {
 }
 
 const styles = `
-:host { all: initial; color: #202124; font: 13px/1.45 Arial, sans-serif; }
-.gce-shell { position: static; width: min(310px, 100%); color: #202124; pointer-events: auto; }
+:host { all: initial; --gce-text: #202124; --gce-muted: #5f6368; --gce-surface: #fff; --gce-input: #fff; --gce-border: #dadce0; --gce-subtle-border: #e8eaed; --gce-hover: #f1f3f4; --gce-selected: #e8f0fe; --gce-focus: #1a73e8; color-scheme: light; color: var(--gce-text); font: 13px/1.45 Arial, sans-serif; }
+:host-context(html[data-theme="dark"]) { --gce-text: #e8eaed; --gce-muted: #bdc1c6; --gce-surface: #292a2d; --gce-input: #202124; --gce-border: #5f6368; --gce-subtle-border: #3c4043; --gce-hover: #3c4043; --gce-selected: #394b65; --gce-focus: #8ab4f8; color-scheme: dark; }
+.gce-shell { position: static; width: min(310px, 100%); color: var(--gce-text); pointer-events: auto; }
 .gce-trigger, .gce-panel button, .gce-panel input, .gce-panel select { font: inherit; }
 .gce-trigger { border: 0; border-radius: 20px; background: #1a73e8; color: white; padding: 9px 14px; box-shadow: 0 2px 8px #0003; cursor: pointer; }
-.gce-panel { width: 100%; max-height: min(60vh, 560px); overflow: auto; margin-top: 8px; padding: 12px; box-sizing: border-box; border: 1px solid #dadce0; border-radius: 12px; background: #fff; box-shadow: 0 6px 24px #0003; }
+.gce-panel { width: 100%; max-height: min(60vh, 560px); overflow: auto; margin-top: 8px; padding: 12px; box-sizing: border-box; border: 1px solid var(--gce-border); border-radius: 12px; background: var(--gce-surface); color: var(--gce-text); box-shadow: 0 6px 24px #0003; }
 .gce-panel[hidden] { display: none; }
 .gce-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .gce-heading h2 { margin: 0; font-size: 16px; }
-.gce-section { border-top: 1px solid #dadce0; padding-top: 10px; margin-top: 10px; }
+.gce-section { border-top: 1px solid var(--gce-border); padding-top: 10px; margin-top: 10px; }
 .gce-section h3 { margin: 0 0 7px; font-size: 13px; }
-.gce-calendar, .gce-entity { border: 1px solid #e8eaed; border-radius: 8px; padding: 8px; margin: 6px 0; }
+.gce-calendar, .gce-entity { border: 1px solid var(--gce-subtle-border); border-radius: 8px; padding: 8px; margin: 6px 0; }
 .gce-calendar-head, .gce-actions { display: flex; align-items: center; gap: 6px; }
 .gce-calendar-head { justify-content: space-between; }
 .gce-calendar-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
@@ -56,15 +57,15 @@ const styles = `
 .gce-calendar-controls label, .gce-entity-fields label { display: contents; }
 .gce-calendar-controls input[type=color] { width: 34px; height: 26px; padding: 1px; }
 .gce-calendar-controls input[type=range] { width: 132px; }
-.gce-panel input[type=text], .gce-panel select { min-width: 0; width: 100%; box-sizing: border-box; padding: 5px; border: 1px solid #dadce0; border-radius: 5px; background: #fff; color: inherit; }
-.gce-panel button { min-height: 28px; padding: 4px 8px; border: 1px solid #dadce0; border-radius: 5px; background: #fff; color: inherit; cursor: pointer; }
-.gce-panel button:hover { background: #f1f3f4; }
+.gce-panel input[type=text], .gce-panel select { min-width: 0; width: 100%; box-sizing: border-box; padding: 5px; border: 1px solid var(--gce-border); border-radius: 5px; background: var(--gce-input); color: inherit; }
+.gce-panel button { min-height: 28px; padding: 4px 8px; border: 1px solid var(--gce-border); border-radius: 5px; background: var(--gce-input); color: inherit; cursor: pointer; }
+.gce-panel button:hover { background: var(--gce-hover); }
 .gce-panel button[data-primary] { background: #1a73e8; border-color: #1a73e8; color: #fff; }
-.gce-panel button:focus-visible, .gce-panel input:focus-visible, .gce-panel select:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+.gce-panel button:focus-visible, .gce-panel input:focus-visible, .gce-panel select:focus-visible { outline: 2px solid var(--gce-focus); outline-offset: 2px; }
 .gce-calendar select { margin-top: 7px; }
-.gce-weak { color: #5f6368; font-size: 11px; }
-.gce-empty { margin: 4px 0; color: #5f6368; }
-.gce-solo { padding: 6px 8px; border-radius: 6px; background: #e8f0fe; }
+.gce-weak { color: var(--gce-muted); font-size: 11px; }
+.gce-empty { margin: 4px 0; color: var(--gce-muted); }
+.gce-solo { padding: 6px 8px; border-radius: 6px; background: var(--gce-selected); }
 `;
 
 export function mountPanel(

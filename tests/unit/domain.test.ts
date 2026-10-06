@@ -71,15 +71,10 @@ describe("Merge candidate safety", () => {
     ).toHaveLength(1);
   });
 
-  it("同一カレンダーの重複を別発生として対応させprivate placeholderとweak identityは除外する", () => {
+  it("同一カレンダーに同一候補が複数ある場合は全体を除外しprivate placeholderとweak identityも除外する", () => {
     const first = event();
     const sameCalendarDuplicate = event({ ref: "same-calendar", domOrder: 1 });
     const otherCalendarDuplicate = event({ ref: "other-calendar", calendarKey: "calendar-b" });
-    const secondOtherCalendarDuplicate = event({
-      ref: "other-calendar-second",
-      calendarKey: "calendar-b",
-      domOrder: 2,
-    });
     const thirdCalendarDuplicate = event({
       ref: "third-calendar",
       calendarKey: "calendar-c",
@@ -99,13 +94,9 @@ describe("Merge candidate safety", () => {
         first,
         sameCalendarDuplicate,
         otherCalendarDuplicate,
-        secondOtherCalendarDuplicate,
         thirdCalendarDuplicate,
       ]),
-    ).toMatchObject([
-      { members: [first, otherCalendarDuplicate, thirdCalendarDuplicate] },
-      { members: [sameCalendarDuplicate, secondOtherCalendarDuplicate] },
-    ]);
+    ).toHaveLength(0);
     expect(groupMergeCandidates(privateEvents)).toHaveLength(0);
     expect(createMergeKey(event({ calendarConfidence: "weak" }))).toBeNull();
     expect(createMergeKey(event({ eventConfidence: "weak" }))).toBeNull();

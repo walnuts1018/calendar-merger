@@ -4,9 +4,7 @@ import { createShadowRootUi } from "wxt/utils/content-script-ui/shadow-root";
 import type { ApplicationHandle } from "../src/application";
 
 import { mountCalendarMergerApplication } from "../src/application";
-
-const calendarSidebarSelector =
-  '[role="list"][aria-label]:has(input[type="checkbox"][aria-label]), [role="group"]:has([role="checkbox"][aria-label]), [role="group"]:has(input[type="checkbox"][aria-label]), [role="group"]:has([role="switch"][aria-label]), nav[aria-label*="calendar" i]:has([role="checkbox"][aria-label])';
+import { findCalendarListRoot } from "../src/gcal/calendar-root";
 
 export default defineContentScript({
   matches: ["https://calendar.google.com/*"],
@@ -19,7 +17,7 @@ export default defineContentScript({
     const ui = await createShadowRootUi(context, {
       name: "calendar-merger-ui",
       position: "inline",
-      anchor: calendarSidebarSelector,
+      anchor: () => findCalendarListRoot(document),
       append: "after",
       onMount(container, _shadow, shadowHost) {
         shadowHost.setAttribute("data-gce-ui", "");
@@ -43,20 +41,29 @@ export default defineContentScript({
       },
     });
     const mountObserver = new MutationObserver(() => {
-      const anchor = document.querySelector(calendarSidebarSelector);
-      if (!anchor) {
-        if (ui.shadowHost.isConnected) ui.remove();
+      if (ui.shadowHost.isConnected) return;
+      if (!findCalendarListRoot(document)) {
+        ui.remove();
         return;
       }
-      if (ui.shadowHost.isConnected) return;
-      generation += 1;
-      application?.dispose();
-      application = undefined;
+      ui.remove();
       ui.mount();
     });
-    mountObserver.observe(document.body, { childList: true, subtree: true });
+    mountObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        "aria-label",
+        "aria-labelledby",
+        "data-calendar-id",
+        "data-calendarid",
+        "data-calendar-key",
+        "data-id",
+        "role",
+      ],
+    });
     context.onInvalidated(() => mountObserver.disconnect());
-    const anchor = document.querySelector(calendarSidebarSelector);
-    if (anchor) ui.mount();
+    if (findCalendarListRoot(document)) ui.mount();
   },
 });

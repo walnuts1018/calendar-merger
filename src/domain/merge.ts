@@ -57,47 +57,24 @@ export function groupMergeCandidates(
   events: readonly CalendarEvent[],
   getMergeKey: (event: CalendarEvent) => string | null = createMergeKey,
 ): MergeGroup[] {
-  const candidates = new Map<string, Map<string, CalendarEvent[]>>();
+  const candidates = new Map<string, CalendarEvent[]>();
 
   for (const event of events) {
     const key = getMergeKey(event);
     if (!key) continue;
-    let calendars = candidates.get(key);
-    if (!calendars) {
-      calendars = new Map();
-      candidates.set(key, calendars);
-    }
-    let occurrences = calendars.get(event.calendarKey);
-    if (!occurrences) {
-      occurrences = [];
-      calendars.set(event.calendarKey, occurrences);
-    }
-    occurrences.push(event);
+    const members = candidates.get(key);
+    if (members) members.push(event);
+    else candidates.set(key, [event]);
   }
 
   const groups: MergeGroup[] = [];
-  for (const [candidateKey, calendars] of candidates) {
-    const occurrencesByCalendar = [...calendars.values()].map((occurrences) =>
-      occurrences.toSorted(
-        (left, right) => left.domOrder - right.domOrder || left.ref.localeCompare(right.ref),
-      ),
-    );
-    const occurrenceCount = Math.max(...occurrencesByCalendar.map(({ length }) => length));
-    for (let occurrence = 0; occurrence < occurrenceCount; occurrence += 1) {
-      const members = occurrencesByCalendar
-        .map((items) => items[occurrence])
-        .filter((event): event is CalendarEvent => event !== undefined);
-      if (members.length < 2) continue;
+  for (const [key, members] of candidates) {
+    const calendarKeys = members.map(({ calendarKey }) => calendarKey);
+    if (new Set(calendarKeys).size !== members.length) continue;
 
-      const canonical = chooseCanonicalEvent(members);
-      if (!canonical) continue;
-      groups.push({
-        key: JSON.stringify([candidateKey, occurrence]),
-        canonical,
-        members,
-        calendarKeys: members.map(({ calendarKey }) => calendarKey),
-      });
-    }
+    const canonical = chooseCanonicalEvent(members);
+    if (!canonical || members.length < 2) continue;
+    groups.push({ key, canonical, members, calendarKeys });
   }
 
   return groups;
