@@ -255,7 +255,7 @@ export class GoogleCalendarDomAdapter {
     if (/schedule|agenda|\bagenda\b/u.test(route)) return "schedule";
     if (/week|\bweek\b/u.test(route)) return "week";
     if (/day|\bday\b/u.test(route)) return "day";
-    return "unknown";
+    return toolbarCalendarView(this.document);
   }
 
   private observe(
@@ -456,6 +456,32 @@ export class GoogleCalendarDomAdapter {
     }
     return ref;
   }
+}
+
+function toolbarCalendarView(document: Document): CalendarView {
+  const labels = new Map<string, CalendarView>([
+    ["日", "day"],
+    ["day", "day"],
+    ["週", "week"],
+    ["week", "week"],
+    ["週間", "week"],
+    ["月", "month"],
+    ["month", "month"],
+    ["年", "year"],
+    ["year", "year"],
+    ["スケジュール", "schedule"],
+    ["schedule", "schedule"],
+    ["agenda", "schedule"],
+  ]);
+  for (const button of document.querySelectorAll<HTMLElement>('[aria-haspopup="menu"]')) {
+    const label = (button.innerText ?? button.textContent ?? "")
+      .replace(/arrow_drop_down/giu, "")
+      .trim()
+      .toLowerCase();
+    const view = labels.get(label);
+    if (view) return view;
+  }
+  return "unknown";
 }
 
 function normalizeColor(value: string, document: Document): string | undefined {

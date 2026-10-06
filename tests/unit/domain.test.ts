@@ -269,7 +269,10 @@ describe("Google Calendar DOM adaptation", () => {
   });
 
   it("匿名化したGoogle Calendar週表示DOMから同色カレンダーの3予定を識別する", () => {
-    document.documentElement.setAttribute("data-calendar-view", "week");
+    const viewButton = document.createElement("button");
+    viewButton.setAttribute("aria-haspopup", "menu");
+    viewButton.textContent = "週 arrow_drop_down";
+    document.body.append(viewButton);
     const encode = (value: string) =>
       btoa(value).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
     const owners = [
@@ -292,6 +295,7 @@ describe("Google Calendar DOM adaptation", () => {
     document.body.insertAdjacentHTML("beforeend", html);
 
     const adapter = new GoogleCalendarDomAdapter(document);
+    expect(adapter.getCurrentView()).toBe("week");
     const calendars = adapter.listCalendars();
     const events = adapter.listVisibleEvents();
     const groups = groupMergeCandidates(events);
@@ -312,6 +316,7 @@ describe("Google Calendar DOM adaptation", () => {
 
     document.querySelector('[role="list"][aria-label="My calendars"]')?.remove();
     document.querySelector('[role="gridcell"][data-datekey="29000"]')?.remove();
+    viewButton.remove();
   });
 
   it("匿名化した月表示DOMから時刻付き予定と終日予定を復元する", () => {
