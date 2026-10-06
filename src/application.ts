@@ -38,7 +38,15 @@ export async function mountCalendarMergerApplication(
   const events = new Map<HTMLElement, CalendarEvent>();
   const calendarRowControls = new Map<
     string,
-    { row: HTMLElement; label: string; nativeColor?: string; dispose(): void; update(): void }
+    {
+      row: HTMLElement;
+      controlContainer: HTMLElement;
+      panelContainer: HTMLElement;
+      label: string;
+      nativeColor?: string;
+      dispose(): void;
+      update(): void;
+    }
   >();
   let calendars = adapter.listCalendars();
   let currentView = adapter.getCurrentView();
@@ -75,11 +83,15 @@ export async function mountCalendarMergerApplication(
     for (const calendar of calendars) {
       if (calendar.confidence === "weak") continue;
       const row = adapter.getCalendarRowElement(calendar.key);
-      if (!row) continue;
+      const controlContainer = adapter.getCalendarControlContainer(calendar.key);
+      const panelContainer = adapter.getCalendarPanelContainer(calendar.key);
+      if (!row || !controlContainer || !panelContainer) continue;
       activeKeys.add(calendar.key);
       const existing = calendarRowControls.get(calendar.key);
       if (
         existing?.row === row &&
+        existing.controlContainer === controlContainer &&
+        existing.panelContainer === panelContainer &&
         existing.label === calendar.label &&
         existing.nativeColor === calendar.nativeColor
       ) {
@@ -89,12 +101,16 @@ export async function mountCalendarMergerApplication(
       existing?.dispose();
       const controls = mountCalendarRowControls(
         row,
+        controlContainer,
+        panelContainer,
         calendar,
         settings.calendars[calendar.key],
         actions,
       );
       calendarRowControls.set(calendar.key, {
         row,
+        controlContainer,
+        panelContainer,
         label: calendar.label,
         ...(calendar.nativeColor ? { nativeColor: calendar.nativeColor } : {}),
         dispose: () => controls.dispose(),

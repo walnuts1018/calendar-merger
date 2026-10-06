@@ -6,31 +6,37 @@ export interface CalendarRowControls {
   dispose(): void;
 }
 
-interface OpenPopover {
-  host: HTMLElement;
+interface OpenControlPanel {
+  hosts: readonly HTMLElement[];
   close(): void;
 }
 
-interface PopoverRegistry {
+interface ControlPanelRegistry {
   controller: AbortController;
   mountedControls: number;
-  open: Set<OpenPopover>;
+  open: Set<OpenControlPanel>;
 }
 
-interface PopoverRegistration {
+interface ControlPanelRegistration {
   setOpen(open: boolean): void;
   dispose(): void;
 }
 
-const popoverRegistries = new WeakMap<Document, PopoverRegistry>();
+const controlPanelRegistries = new WeakMap<Document, ControlPanelRegistry>();
 
-const styles = `
-:host { all: initial; position: relative; display: inline-flex; color: #202124; font: 12px/1.4 Arial, sans-serif; }
+const triggerStyles = `
+:host { all: initial; display: inline-flex; flex: none; vertical-align: middle; color: #202124; font: 12px/1.4 Arial, sans-serif; }
+button { cursor: pointer; font: inherit; }
+.trigger { width: 18px; height: 18px; margin-inline-start: 2px; padding: 0; border: 1px solid #dadce0; border-radius: 50%; background: var(--gce-color); box-shadow: inset 0 0 0 2px #fff; }
+button:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+`;
+
+const panelStyles = `
+:host { all: initial; display: block; width: calc(100% - 8px); margin: 0 0 6px 8px; box-sizing: border-box; color: #202124; font: 12px/1.4 Arial, sans-serif; }
+:host([hidden]) { display: none !important; }
 button, input { font: inherit; }
 button { cursor: pointer; }
-.trigger { width: 22px; height: 22px; padding: 0; border: 1px solid #dadce0; border-radius: 50%; background: var(--gce-color); box-shadow: inset 0 0 0 2px #fff; }
-.popover { position: absolute; top: 24px; left: 0; z-index: 2147483647; width: 220px; padding: 10px; border: 1px solid #dadce0; border-radius: 8px; background: #fff; box-shadow: 0 4px 16px #0004; }
-.popover[hidden] { display: none; }
+.controls-panel { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #dadce0; border-radius: 8px; background: #fff; box-shadow: 0 2px 8px #0002; }
 label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 9px; }
 input[type=color] { width: 38px; height: 28px; padding: 1px; }
 input[type=range] { width: 125px; }
@@ -40,6 +46,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid #1a73e8; outline-
 
 export function mountCalendarRowControls(
   row: HTMLElement,
+  controlContainer: HTMLElement,
+  panelContainer: HTMLElement,
   calendar: CalendarSnapshot,
   preferences: CalendarPreferences | undefined,
   actions: Pick<
@@ -48,25 +56,30 @@ export function mountCalendarRowControls(
   >,
 ): CalendarRowControls {
   const document = row.ownerDocument;
-  for (const orphan of row.querySelectorAll<HTMLElement>(":scope > [data-gce-calendar-controls]")) {
-    if (!orphan.shadowRoot) orphan.remove();
-  }
   const host = document.createElement("span");
   host.setAttribute("data-gce-ui", "");
   host.setAttribute("data-gce-calendar-controls", "");
   const shadow = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
-  style.textContent = styles;
+  style.textContent = triggerStyles;
   const trigger = document.createElement("button");
   trigger.type = "button";
   trigger.className = "trigger";
   trigger.setAttribute("aria-label", `${calendar.label}の色と透明度を設定`);
   trigger.setAttribute("aria-expanded", "false");
-  const popover = document.createElement("div");
-  popover.className = "popover";
-  popover.setAttribute("role", "group");
-  popover.setAttribute("aria-label", `${calendar.label}の表示設定`);
-  popover.hidden = true;
+  shadow.append(style, trigger);
+
+  const panelHost = document.createElement("div");
+  panelHost.setAttribute("data-gce-ui", "");
+  panelHost.setAttribute("data-gce-calendar-controls-panel", "");
+  panelHost.hidden = true;
+  const panelShadow = panelHost.attachShadow({ mode: "open" });
+  const panelStyle = document.createElement("style");
+  panelStyle.textContent = panelStyles;
+  const controlsPanel = document.createElement("div");
+  controlsPanel.className = "controls-panel";
+  controlsPanel.setAttribute("role", "group");
+  controlsPanel.setAttribute("aria-label", `${calendar.label}の表示設定`);
   const colorLabel = document.createElement("label");
   colorLabel.append(document.createTextNode("Color"));
   const color = document.createElement("input");
@@ -92,32 +105,41 @@ export function mountCalendarRowControls(
   solo.className = "solo";
   solo.textContent = "Solo";
   solo.setAttribute("aria-label", `${calendar.label}だけを表示`);
-  popover.append(colorLabel, opacityLabel, reset, solo);
-  shadow.append(style, trigger, popover);
-  row.append(host);
+  controlsPanel.append(colorLabel, opacityLabel, reset, solo);
+  panelShadow.append(panelStyle, controlsPanel);
+
+  const placeHosts = () => {
+    if (host.parentElement !== controlContainer) controlContainer.append(host);
+    if (panelContainer === row) {
+      if (panelHost.parentElement !== row) row.append(panelHost);
+    } else if (panelHost.parentElement !== panelContainer || panelHost.previousSibling !== row) {
+      panelContainer.insertBefore(panelHost, row.nextSibling);
+    }
+  };
+  placeHosts();
 
   const controller = new AbortController();
   const { signal } = controller;
   let configuredColor = preferences?.color;
-  let registration: PopoverRegistration | undefined;
-  const closePopover = () => {
-    popover.hidden = true;
+  let registration: ControlPanelRegistration | undefined;
+  const closeControlsPanel = () => {
+    panelHost.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
     registration?.setOpen(false);
   };
-  registration = registerPopover(document, host, closePopover);
+  registration = registerControlPanel(document, [host, panelHost], closeControlsPanel);
   const stopPropagation = (event: Event) => event.stopPropagation();
   trigger.addEventListener(
     "click",
     (event) => {
       event.stopPropagation();
-      popover.hidden = !popover.hidden;
-      trigger.setAttribute("aria-expanded", String(!popover.hidden));
-      registration?.setOpen(!popover.hidden);
+      panelHost.hidden = !panelHost.hidden;
+      trigger.setAttribute("aria-expanded", String(!panelHost.hidden));
+      registration?.setOpen(!panelHost.hidden);
     },
     { signal },
   );
-  for (const element of [color, opacity, reset, solo, popover])
+  for (const element of [color, opacity, reset, solo, controlsPanel, panelHost])
     element.addEventListener("click", stopPropagation, { signal });
   color.addEventListener(
     "input",
@@ -149,16 +171,16 @@ export function mountCalendarRowControls(
   solo.addEventListener(
     "click",
     () => {
-      closePopover();
+      closeControlsPanel();
       actions.soloCalendar(calendar.key);
     },
     { signal },
   );
-  popover.addEventListener(
+  controlsPanel.addEventListener(
     "keydown",
     (event) => {
       if (event.key !== "Escape") return;
-      closePopover();
+      closeControlsPanel();
       trigger.focus();
     },
     { signal },
@@ -170,12 +192,18 @@ export function mountCalendarRowControls(
     "focusout",
     (event) => {
       if (event.relatedTarget instanceof Node && row.contains(event.relatedTarget)) return;
+      if (
+        event.relatedTarget === panelHost ||
+        (event.relatedTarget instanceof Node && panelHost.contains(event.relatedTarget))
+      )
+        return;
       actions.spotlightCalendar(null);
     },
     { signal },
   );
 
   const update = (next: CalendarPreferences | undefined) => {
+    placeHosts();
     configuredColor = next?.color;
     const nextColor = next?.color ?? calendar.nativeColor ?? "#4285f4";
     color.value = /^#[\da-f]{6}$/iu.test(nextColor) ? nextColor : "#4285f4";
@@ -191,16 +219,17 @@ export function mountCalendarRowControls(
       controller.abort();
       registration?.dispose();
       host.remove();
+      panelHost.remove();
     },
   };
 }
 
-function registerPopover(
+function registerControlPanel(
   document: Document,
-  host: HTMLElement,
+  hosts: readonly HTMLElement[],
   close: () => void,
-): PopoverRegistration {
-  let registry = popoverRegistries.get(document);
+): ControlPanelRegistration {
+  let registry = controlPanelRegistries.get(document);
   if (!registry) {
     const controller = new AbortController();
     registry = { controller, mountedControls: 0, open: new Set() };
@@ -209,28 +238,28 @@ function registerPopover(
       "pointerdown",
       (event) => {
         for (const popover of activeRegistry.open) {
-          if (!event.composedPath().includes(popover.host)) popover.close();
+          if (!popover.hosts.some((host) => event.composedPath().includes(host))) popover.close();
         }
       },
       { capture: true, signal: controller.signal },
     );
-    popoverRegistries.set(document, registry);
+    controlPanelRegistries.set(document, registry);
   }
 
   const activeRegistry = registry;
-  const popover = { host, close };
+  const controlPanel = { hosts, close };
   activeRegistry.mountedControls += 1;
   return {
     setOpen(open) {
-      if (open) activeRegistry.open.add(popover);
-      else activeRegistry.open.delete(popover);
+      if (open) activeRegistry.open.add(controlPanel);
+      else activeRegistry.open.delete(controlPanel);
     },
     dispose() {
-      activeRegistry.open.delete(popover);
+      activeRegistry.open.delete(controlPanel);
       activeRegistry.mountedControls -= 1;
       if (activeRegistry.mountedControls === 0) {
         activeRegistry.controller.abort();
-        popoverRegistries.delete(document);
+        controlPanelRegistries.delete(document);
       }
     },
   };

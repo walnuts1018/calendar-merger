@@ -29,6 +29,8 @@ export class GoogleCalendarDomAdapter {
   private readonly calendarControls = new WeakMap<Element, CalendarSnapshot>();
   private readonly calendarToggleElements = new Map<string, HTMLElement>();
   private readonly calendarRowElements = new Map<string, HTMLElement>();
+  private readonly calendarControlContainers = new Map<string, HTMLElement>();
+  private readonly calendarPanelContainers = new Map<string, HTMLElement>();
   private readonly eventRefs = new WeakMap<Element, string>();
   private readonly eventCalendarRefs = new WeakMap<
     Element,
@@ -74,12 +76,17 @@ export class GoogleCalendarDomAdapter {
     const bases = controls.map((control) => {
       const row = this.calendarRow(control);
       if (!row) return null;
+      const controlContainer = this.calendarControlContainer(control, row);
+      if (!controlContainer) return null;
+      const panelContainer = this.calendarPanelContainer(row);
       const label = this.calendarLabel(control, row);
       const nativeColor = this.nativeColor(row);
       const section = this.calendarSectionKey(row);
       return {
         control,
         row,
+        controlContainer,
+        panelContainer,
         label,
         nativeColor,
         section,
@@ -100,10 +107,13 @@ export class GoogleCalendarDomAdapter {
     const calendars: CalendarSnapshot[] = [];
     this.calendarToggleElements.clear();
     this.calendarRowElements.clear();
+    this.calendarControlContainers.clear();
+    this.calendarPanelContainers.clear();
 
     for (const entry of bases) {
       if (!entry || !entry.label || entry.row.closest("[data-gce-ui]")) continue;
-      const { control, row, label, nativeColor, section, base } = entry;
+      const { control, row, controlContainer, panelContainer, label, nativeColor, section, base } =
+        entry;
       const id = readCalendarId(row);
       const key = id ? `calendar:${id}` : calendarFallbackKey(label, section);
       const confidence =
@@ -124,6 +134,8 @@ export class GoogleCalendarDomAdapter {
       if (confidence !== "weak") {
         this.calendarToggleElements.set(key, control);
         this.calendarRowElements.set(key, row);
+        this.calendarControlContainers.set(key, controlContainer);
+        this.calendarPanelContainers.set(key, panelContainer);
       }
       calendars.push(snapshot);
     }
@@ -138,6 +150,14 @@ export class GoogleCalendarDomAdapter {
 
   getCalendarRowElement(calendarKey: string): HTMLElement | null {
     return this.calendarRowElements.get(calendarKey) ?? null;
+  }
+
+  getCalendarControlContainer(calendarKey: string): HTMLElement | null {
+    return this.calendarControlContainers.get(calendarKey) ?? null;
+  }
+
+  getCalendarPanelContainer(calendarKey: string): HTMLElement | null {
+    return this.calendarPanelContainers.get(calendarKey) ?? null;
   }
 
   getCalendars(): readonly CalendarSnapshot[] {
@@ -288,6 +308,30 @@ export class GoogleCalendarDomAdapter {
   private calendarRow(control: Element): HTMLElement | null {
     return (control.closest<HTMLElement>('[role="listitem"], [role="treeitem"]') ??
       control.parentElement) as HTMLElement | null;
+  }
+
+  private calendarControlContainer(control: Element, row: HTMLElement): HTMLElement | null {
+    const window = this.document.defaultView;
+    if (!window) return row;
+    const rowDisplay = window.getComputedStyle(row).display;
+    if (rowDisplay === "flex" || rowDisplay === "inline-flex") return row;
+
+    const child = [...row.children].find((candidate) => candidate.contains(control));
+    if (!(child instanceof HTMLElement)) return row;
+    const childDisplay = window.getComputedStyle(child).display;
+    return childDisplay === "flex" || childDisplay === "inline-flex" ? child : row;
+  }
+
+  private calendarPanelContainer(row: HTMLElement): HTMLElement {
+    const parent = row.parentElement;
+    if (!parent) return row;
+    const style = this.document.defaultView?.getComputedStyle(parent);
+    if (
+      style?.display === "block" ||
+      (style?.display === "flex" && style.flexDirection === "column")
+    )
+      return parent;
+    return row;
   }
 
   private calendarLabel(control: Element, row: Element): string {

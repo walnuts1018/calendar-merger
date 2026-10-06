@@ -62,7 +62,10 @@ test("groupを管理し、group SoloとSpotlightを操作する", async ({ page 
   await inlineCalendarControls
     .getByRole("button", { name: "Calendar Aの色と透明度を設定" })
     .click();
-  await inlineCalendarControls.getByRole("button", { name: "Calendar Aだけを表示" }).click();
+  await page
+    .locator("[data-gce-calendar-controls-panel]")
+    .getByRole("button", { name: "Calendar Aだけを表示" })
+    .click();
   await expect(nativeCalendar(page, "calendar-1")).toHaveAttribute("aria-checked", "true");
   await expect(nativeCalendar(page, "calendar-2")).toHaveAttribute("aria-checked", "false");
   await page.getByRole("button", { name: "Solo表示を解除" }).click();

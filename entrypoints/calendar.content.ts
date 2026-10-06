@@ -42,6 +42,21 @@ export default defineContentScript({
         application = undefined;
       },
     });
-    ui.autoMount();
+    const mountObserver = new MutationObserver(() => {
+      const anchor = document.querySelector(calendarSidebarSelector);
+      if (!anchor) {
+        if (ui.shadowHost.isConnected) ui.remove();
+        return;
+      }
+      if (ui.shadowHost.isConnected) return;
+      generation += 1;
+      application?.dispose();
+      application = undefined;
+      ui.mount();
+    });
+    mountObserver.observe(document.body, { childList: true, subtree: true });
+    context.onInvalidated(() => mountObserver.disconnect());
+    const anchor = document.querySelector(calendarSidebarSelector);
+    if (anchor) ui.mount();
   },
 });
