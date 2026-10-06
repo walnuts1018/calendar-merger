@@ -6,7 +6,11 @@ import type {
 } from "../domain/model";
 import type { CalendarViewAdapter } from "./view-adapter";
 
-import { calendarControlSelector, findCalendarListRoot } from "./calendar-root";
+import {
+  calendarControlSelector,
+  findCalendarListRoot,
+  matchesCalendarListStructure,
+} from "./calendar-root";
 import {
   calendarConfidence,
   calendarFallbackKey,
@@ -83,7 +87,9 @@ export class GoogleCalendarDomAdapter {
   }
 
   listCalendars(): CalendarSnapshot[] {
-    const root = findCalendarListRoot(this.document);
+    const root = this.calendarListRoot?.isConnected
+      ? this.calendarListRoot
+      : findCalendarListRoot(this.document);
     this.calendarListRoot = root;
     const controls = root
       ? [...root.querySelectorAll<HTMLElement>(calendarControlSelector)].filter((control) =>
@@ -200,11 +206,31 @@ export class GoogleCalendarDomAdapter {
   }
 
   hasCalendarChanges(dirty: ReadonlySet<Node>): boolean {
-    const root = findCalendarListRoot(this.document);
-    if (root !== this.calendarListRoot) return true;
-    if (!root) return false;
-    return this.dirtyElements(dirty, calendarControlSelector).some((control) =>
-      root.contains(control),
+    const root = this.calendarListRoot;
+    if (!root || !root.isConnected) {
+      if (![...dirty].some(matchesCalendarListStructure)) return false;
+      const nextRoot = findCalendarListRoot(this.document);
+      this.calendarListRoot = nextRoot;
+      return nextRoot !== root;
+    }
+
+    const elements = [...dirty].flatMap((node) => {
+      if (node.nodeType === 1) return [node as Element];
+      if (node.nodeType === 3 && node.parentElement) return [node.parentElement];
+      return [];
+    });
+    const previousElements = [
+      ...this.calendarToggleElements.values(),
+      ...this.calendarRowElements.values(),
+    ];
+    return elements.some(
+      (element) =>
+        root === element ||
+        root.contains(element) ||
+        previousElements.some(
+          (previous) =>
+            previous === element || previous.contains(element) || element.contains(previous),
+        ),
     );
   }
 

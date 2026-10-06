@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { CalendarEvent, MergeGroup } from "../../src/domain/model";
 
@@ -123,6 +123,9 @@ describe("Merge candidate safety", () => {
     expect(groupMergeCandidates([first, duplicate, differentSlot])).toMatchObject([
       { members: [first, duplicate] },
     ]);
+    expect(createMergeKey(first)).not.toBe(
+      createMergeKey(event({ start: "", end: "", layoutKey: "28999:1055:46", allDay: true })),
+    );
     expect(createMergeKey(event({ start: "", end: "" }))).toBeNull();
   });
 
@@ -233,6 +236,60 @@ describe("Calendar identity", () => {
 });
 
 describe("Google Calendar DOM adaptation", () => {
+  it("sidebarが未検出の時は無関係な予定mutationからdocument全体を再探索しない", () => {
+    const adapter = new GoogleCalendarDomAdapter(document);
+    const event = document.createElement("div");
+    event.setAttribute("data-eventid", "event@example.test");
+    document.body.append(event);
+    const documentQuery = vi.spyOn(document, "querySelectorAll");
+
+    try {
+      expect(adapter.hasCalendarChanges(new Set([event]))).toBe(false);
+      expect(documentQuery).not.toHaveBeenCalled();
+    } finally {
+      documentQuery.mockRestore();
+      event.remove();
+    }
+  });
+
+  it("予定のDOM変更ではcalendar list rootを再探索し、root交換時だけ更新する", () => {
+    const root = document.createElement("div");
+    root.setAttribute("role", "list");
+    root.setAttribute("aria-label", "My calendars");
+    const row = document.createElement("li");
+    row.setAttribute("role", "listitem");
+    row.setAttribute("data-calendar-id", "primary@example.test");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.setAttribute("aria-label", "Primary");
+    checkbox.checked = true;
+    row.append(checkbox);
+    root.append(row);
+    document.body.append(root);
+
+    const adapter = new GoogleCalendarDomAdapter(document);
+    adapter.listCalendars();
+    const documentQuery = vi.spyOn(document, "querySelectorAll");
+    const unrelatedEvent = document.createElement("div");
+    document.body.append(unrelatedEvent);
+
+    let replacement: HTMLElement | null = null;
+    try {
+      expect(adapter.hasCalendarChanges(new Set([unrelatedEvent]))).toBe(false);
+      expect(documentQuery).not.toHaveBeenCalled();
+
+      replacement = root.cloneNode(true) as HTMLElement;
+      root.replaceWith(replacement);
+      expect(adapter.hasCalendarChanges(new Set([root]))).toBe(true);
+      expect(documentQuery).toHaveBeenCalled();
+    } finally {
+      documentQuery.mockRestore();
+      replacement?.remove();
+      root.remove();
+      unrelatedEvent.remove();
+    }
+  });
+
   it("カレンダー操作ボタンをrole=listitem内のフレックス行へ配置する", () => {
     const list = document.createElement("div");
     list.setAttribute("role", "list");
@@ -363,6 +420,50 @@ describe("Google Calendar DOM adaptation", () => {
 
     document.querySelector('[role="list"][aria-label="My calendars"]')?.remove();
     document.querySelector('[role="gridcell"][aria-labelledby="october-eighth"]')?.remove();
+  });
+
+  it("匿名化した日・週表示DOMから終日レーンを復元して同一予定だけをまとめる", () => {
+    const encode = (value: string) =>
+      btoa(value).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+    let html = readFileSync(resolve("tests/fixtures/gcal/day-week-all-day-live.html"), "utf8");
+    html = html.replace("__CALENDAR_FIRST__", encode("first@example.test"));
+    html = html.replace("__CALENDAR_SECOND__", encode("second@example.test"));
+    html = html.replace("__EVENT_FIRST__", encode("birthday-first@google.com first@example.test"));
+    html = html.replace(
+      "__EVENT_SECOND__",
+      encode("birthday-second@google.com second@example.test"),
+    );
+    document.body.insertAdjacentHTML("beforeend", html);
+
+    const heading = document.querySelector<HTMLElement>("[data-fixture-view-heading]");
+    for (const [view, headingText] of [
+      ["day", "2026年 10月 7日 (水曜日)"],
+      ["week", "2026年 10月 4日の週"],
+    ] as const) {
+      document.documentElement.setAttribute("data-calendar-view", view);
+      if (heading) heading.textContent = headingText;
+      const adapter = new GoogleCalendarDomAdapter(document);
+      adapter.listCalendars();
+      const events = adapter.listVisibleEvents();
+
+      expect(
+        events.map(({ title, dateKey, start, end, allDay }) => [
+          title,
+          dateKey,
+          start,
+          end,
+          allDay,
+        ]),
+      ).toEqual([
+        ["Birthday", "2026-10-07", "00:00", "24:00", true],
+        ["Birthday", "2026-10-07", "00:00", "24:00", true],
+      ]);
+      expect(groupMergeCandidates(events)).toHaveLength(1);
+    }
+
+    document.querySelector('[role="list"][aria-label="My calendars"]')?.remove();
+    document.querySelector('[role="gridcell"][aria-labelledby="all-day-cell-label"]')?.remove();
+    heading?.remove();
   });
 
   it("匿名化したスケジュール表示DOMから時刻と折りたたみ可能な行を識別する", () => {

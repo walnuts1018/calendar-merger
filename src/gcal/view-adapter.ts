@@ -175,7 +175,7 @@ function eventInterval(
   if (!start || !end || Date.parse(end) <= Date.parse(start))
     return semanticInterval(element, view) ?? layoutInterval(element, view);
   const dateOnlyInterval = !startValue.includes("T") && !endValue.includes("T");
-  const allDay = element.getAttribute("data-all-day") === "true" || dateOnlyInterval;
+  const allDay = dateOnlyInterval || hasAllDayAttribute(element);
   return { dateKey: start.slice(0, 10), start, end, allDay };
 }
 
@@ -196,17 +196,33 @@ function semanticInterval(
     htmlElement.innerText ?? "",
     element.textContent ?? "",
   ].join("\n");
+  const cell = element.closest('[role="gridcell"]');
+  const cellLabel = accessibleLabel(cell, element.ownerDocument);
   const dateFromContainer = element.closest("[data-datekey]")?.getAttribute("data-datekey") ?? null;
-  const dateKey = dateFromContainer ?? localizedDateKey(content);
+  const dateKey =
+    dateFromContainer ??
+    localizedDateKey(`${cellLabel}\n${content}`) ??
+    dateKeyFromMonthDay(cellLabel, element.ownerDocument, view);
   if (!dateKey) return null;
 
   const timeRange = parseTimeRange(content);
   if (timeRange) return { dateKey, ...timeRange, allDay: false };
-  if (/終日|all\s+day/iu.test(content))
+  if (hasAllDaySemantics(element, cellLabel))
     return { dateKey, start: "00:00", end: "24:00", allDay: true };
   if (view === "month" && element.hasAttribute("data-stacked-layout-chip-container"))
     return { dateKey, start: "00:00", end: "24:00", allDay: true };
   return null;
+}
+
+function hasAllDaySemantics(element: Element, content: string): boolean {
+  return hasAllDayAttribute(element) || /終日|all\s+day/iu.test(content);
+}
+
+function hasAllDayAttribute(element: Element): boolean {
+  return (
+    element.getAttribute("data-all-day") === "true" ||
+    Boolean(element.closest('[data-all-day="true"]'))
+  );
 }
 
 function parseTimeRange(value: string): { start: string; end: string } | null {
@@ -259,6 +275,82 @@ function localizedDateKey(value: string): string | null {
   return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}-${String(parsed.getUTCDate()).padStart(2, "0")}`;
 }
 
+function dateKeyFromMonthDay(
+  value: string,
+  document: Document,
+  view: SupportedCalendarView,
+): string | null {
+  if (view !== "day" && view !== "week") return null;
+  const japaneseDate = /(?<!\d)(\d{1,2})月\s*(\d{1,2})日/u.exec(value);
+  const englishDate =
+    /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\b/iu.exec(
+      value,
+    );
+  const month = japaneseDate?.[1]
+    ? Number(japaneseDate[1])
+    : englishDate?.[1]
+      ? monthNumber(englishDate[1])
+      : null;
+  const day = Number(japaneseDate?.[2] ?? englishDate?.[2]);
+  if (!month || !Number.isInteger(day) || day < 1 || day > 31) return null;
+
+  const headings = [...document.querySelectorAll<HTMLElement>("h1, h2, [role='heading']")];
+  const referenceHeading =
+    headings.find(
+      (heading) =>
+        !heading.closest("[hidden]") &&
+        (view === "week" ? /週|week/iu.test(heading.textContent ?? "") : true) &&
+        localizedDateKey(heading.textContent ?? "") !== null,
+    ) ??
+    headings.find(
+      (heading) => !heading.closest("[hidden]") && localizedDateKey(heading.textContent ?? ""),
+    );
+  const referenceDate = referenceHeading
+    ? localizedDateKey(referenceHeading.textContent ?? "")
+    : null;
+  if (!referenceDate) return null;
+
+  const referenceTime = Date.parse(`${referenceDate}T12:00:00Z`);
+  const referenceYear = new Date(referenceTime).getUTCFullYear();
+  const searchRadius = view === "week" ? 6 : 0;
+  const matches = new Set<string>();
+  for (let year = referenceYear - 1; year <= referenceYear + 1; year += 1) {
+    const date = new Date(Date.UTC(year, month - 1, day, 12));
+    if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) continue;
+    if (Math.abs(date.getTime() - referenceTime) > searchRadius * 86_400_000) continue;
+    matches.add(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+  }
+  return matches.size === 1 ? (matches.values().next().value ?? null) : null;
+}
+
+function monthNumber(value: string): number | null {
+  const month = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/iu
+    .exec(value)?.[1]
+    ?.toLowerCase();
+  if (!month) return null;
+  return (
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(
+      month,
+    ) + 1
+  );
+}
+
+function accessibleLabel(element: Element | null, document: Document): string {
+  if (!element) return "";
+  const labels = element.getAttribute("aria-labelledby") ?? "";
+  const references = labels
+    .split(/\s+/u)
+    .map((id) => document.getElementById(id)?.textContent?.trim() ?? "")
+    .filter(Boolean);
+  return [
+    element.getAttribute("aria-label") ?? "",
+    ...references,
+    (element as HTMLElement).innerText ?? "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function layoutInterval(
   element: Element,
   view: SupportedCalendarView,
@@ -272,6 +364,17 @@ function layoutInterval(
   if (view !== "day" && view !== "week") return null;
   const dateKey = element.closest('[role="gridcell"][data-datekey]')?.getAttribute("data-datekey");
   const htmlElement = element as HTMLElement;
+  const cell = element.closest('[role="gridcell"]');
+  const cellLabel = accessibleLabel(cell, element.ownerDocument);
+  if (dateKey && hasAllDaySemantics(element, cellLabel)) {
+    return {
+      dateKey,
+      start: "00:00",
+      end: "24:00",
+      layoutKey: `${dateKey}:all-day`,
+      allDay: true,
+    };
+  }
   const top = pixelValue(htmlElement.style.top);
   const height = pixelValue(htmlElement.style.height);
   if (!dateKey || top === null || height === null || height <= 0) return null;

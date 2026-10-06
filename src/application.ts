@@ -1,4 +1,4 @@
-import type { CalendarEvent } from "./domain/model";
+import type { CalendarEvent, CalendarSnapshot } from "./domain/model";
 import type { LocalStorageArea, StorageChangeEvent } from "./storage/settings";
 import type { PanelActions } from "./ui/panel";
 
@@ -18,9 +18,11 @@ import {
   calendarKeyFromSettingsStorageKey,
   calendarSettingsStorageKey,
   createDefaultSettings,
+  globalSettingsStorageKey,
   isSettingsStorageKey,
   migrateSettings,
   SettingsRepository,
+  settingsStorageKeyKind,
   settingsStorageKey,
 } from "./storage/settings";
 import { mountCalendarRowControls } from "./ui/calendar-controls";
@@ -76,8 +78,12 @@ export async function mountCalendarMergerApplication(
     Object.entries(settings.calendars)
       .filter(([, preferences]) => preferences.groupId === groupId)
       .map(([calendarKey]) => calendarKey);
-  const visibilitySnapshot = () =>
-    new Map(safeCalendars().map(({ key, visible }) => [key, visible]));
+  const visibilitySnapshot = (source: readonly CalendarSnapshot[] = adapter.listCalendars()) =>
+    new Map(
+      source
+        .filter((calendar) => calendar.confidence !== "weak")
+        .map(({ key, visible }) => [key, visible]),
+    );
   const identitySignature = () =>
     calendars.map(({ key, confidence }) => `${key}:${confidence}`).join("\u0000");
   const getPanelSignature = () =>
@@ -217,43 +223,49 @@ export async function mountCalendarMergerApplication(
       },
       toggleCalendar(calendarKey) {
         if (!safeCalendars().some(({ key }) => key === calendarKey)) return;
-        visibility.toggle(calendarKey);
+        void visibility.toggle(calendarKey);
       },
       soloCalendar(calendarKey) {
         const calendar = safeCalendars().find((entry) => entry.key === calendarKey);
         if (!calendar) return;
-        visibility.apply(solo.enter(new Set([calendarKey]), visibilitySnapshot()));
+        void visibility.applyFrom((current) =>
+          solo.enter(new Set([calendarKey]), visibilitySnapshot(current)),
+        );
         scheduleRender(true);
       },
       soloGroup(groupId) {
         const group = settings.groups[groupId];
         if (!Object.hasOwn(settings.groups, groupId) || !group) return;
-        const available = new Set(safeCalendars().map(({ key }) => key));
-        visibility.apply(
-          solo.enter(
+        void visibility.applyFrom((current) => {
+          const available = new Set(current.map(({ key }) => key));
+          return solo.enter(
             new Set(calendarKeysForGroup(groupId).filter((key) => available.has(key))),
-            visibilitySnapshot(),
-          ),
-        );
+            visibilitySnapshot(current),
+          );
+        });
         scheduleRender(true);
       },
       exitSolo() {
-        visibility.apply(solo.restore(visibilitySnapshot()));
+        void visibility.applyFrom((current) => solo.restore(visibilitySnapshot(current)));
         scheduleRender(true);
       },
       toggleGroup(groupId) {
         const group = settings.groups[groupId];
         if (!Object.hasOwn(settings.groups, groupId) || !group) return;
-        const current = visibilitySnapshot();
-        const groupCalendarKeys = calendarKeysForGroup(groupId);
-        const target = groupVisibilityTarget(groupCalendarKeys, current);
-        const desired = new Set([...current].filter(([, visible]) => visible).map(([key]) => key));
-        for (const key of groupCalendarKeys) {
-          if (!current.has(key)) continue;
-          if (target) desired.add(key);
-          else desired.delete(key);
-        }
-        visibility.apply(visibilityChanges(current, desired));
+        void visibility.applyFrom((calendarsNow) => {
+          const current = visibilitySnapshot(calendarsNow);
+          const groupCalendarKeys = calendarKeysForGroup(groupId);
+          const target = groupVisibilityTarget(groupCalendarKeys, current);
+          const desired = new Set(
+            [...current].filter(([, visible]) => visible).map(([key]) => key),
+          );
+          for (const key of groupCalendarKeys) {
+            if (!current.has(key)) continue;
+            if (target) desired.add(key);
+            else desired.delete(key);
+          }
+          return visibilityChanges(current, desired);
+        });
       },
       createGroup(name) {
         const id = window.crypto.randomUUID();
@@ -293,9 +305,11 @@ export async function mountCalendarMergerApplication(
         scheduleRender(true);
       },
       applyProfile(profileId) {
-        const profile = settings.profiles[profileId];
-        if (!profile) return;
-        visibility.apply(profileVisibilityChanges(profile, visibilitySnapshot()));
+        if (!settings.profiles[profileId]) return;
+        void visibility.applyFrom((current) => {
+          const profile = settings.profiles[profileId];
+          return profile ? profileVisibilityChanges(profile, visibilitySnapshot(current)) : [];
+        });
       },
       updateProfile(profileId) {
         const profile = settings.profiles[profileId];
@@ -516,17 +530,33 @@ export async function mountCalendarMergerApplication(
           if (lifecycle.signal.aborted) return;
           const updated = migrateSettings(settings);
           for (const key of changedKeys) {
-            if (key === settingsStorageKey) {
-              updated.mergeEnabled = latestSettings.mergeEnabled;
-              updated.groups = latestSettings.groups;
-              updated.profiles = latestSettings.profiles;
-              continue;
+            switch (settingsStorageKeyKind(key)) {
+              case "legacy":
+                updated.mergeEnabled = latestSettings.mergeEnabled;
+                updated.groups = latestSettings.groups;
+                updated.profiles = latestSettings.profiles;
+                updated.calendars = latestSettings.calendars;
+                continue;
+              case "global":
+                updated.mergeEnabled = latestSettings.mergeEnabled;
+                continue;
+              case "group":
+                updated.groups = latestSettings.groups;
+                continue;
+              case "profile":
+                updated.profiles = latestSettings.profiles;
+                continue;
+              case "calendar": {
+                const calendarKey = calendarKeyFromSettingsStorageKey(key);
+                if (!calendarKey) continue;
+                const preferences = latestSettings.calendars[calendarKey];
+                if (preferences) updated.calendars[calendarKey] = preferences;
+                else delete updated.calendars[calendarKey];
+                continue;
+              }
+              default:
+                continue;
             }
-            const calendarKey = calendarKeyFromSettingsStorageKey(key);
-            if (!calendarKey) continue;
-            const preferences = latestSettings.calendars[calendarKey];
-            if (preferences) updated.calendars[calendarKey] = preferences;
-            else delete updated.calendars[calendarKey];
           }
           settings = migrateSettings(updated);
           panelSignature = "";
@@ -552,6 +582,7 @@ export async function mountCalendarMergerApplication(
     { once: true },
   );
   pendingStorageKeys.add(settingsStorageKey);
+  pendingStorageKeys.add(globalSettingsStorageKey);
   for (const { key } of safeCalendars()) pendingStorageKeys.add(calendarSettingsStorageKey(key));
   refreshSettingsFromStorage();
 
@@ -564,7 +595,7 @@ export async function mountCalendarMergerApplication(
       geometryResizeObserver?.disconnect();
       observedGeometryContainers.clear();
       pipeline.dispose();
-      visibility.apply(solo.restore(visibilitySnapshot()));
+      void visibility.whenIdle().then(() => visibility.apply(solo.restore(visibilitySnapshot())));
       renderer.restoreAll();
       panelController?.abort();
       for (const controls of calendarRowControls.values()) controls.dispose();

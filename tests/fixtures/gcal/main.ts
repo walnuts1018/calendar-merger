@@ -222,6 +222,16 @@ for (const index of [0, 1])
 
 const storage: LocalStorageArea = {
   async get(key) {
+    if (key === null || key === undefined) {
+      const values: Record<string, unknown> = {};
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const storageKey = window.localStorage.key(index);
+        if (!storageKey) continue;
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw) values[storageKey] = JSON.parse(raw) as unknown;
+      }
+      return values;
+    }
     const raw = window.localStorage.getItem(key);
     return raw ? { [key]: JSON.parse(raw) as unknown } : {};
   },

@@ -3,12 +3,50 @@ import { readCalendarId } from "./identity";
 export const calendarControlSelector =
   '[role="checkbox"][aria-label], input[type="checkbox"][aria-label], [role="switch"][aria-label]';
 
-const calendarContainerSelector =
+export const calendarContainerSelector =
   '[role="list"], [role="tree"], [role="group"], [role="navigation"], [role="complementary"], [role="region"], nav, aside';
-const calendarRowSelector = '[role="listitem"], [role="treeitem"]';
+export const calendarRowSelector = '[role="listitem"], [role="treeitem"]';
 const calendarIdAttributes = ["data-calendar-id", "data-calendarid", "data-calendar-key"];
 const calendarNamePattern =
   /\bcalendar(?:s)?\b|カレンダー|予定表|calendario|calendários?|calendrier|kalender|kalendar|календар/iu;
+
+export function isCalendarListMutationCandidate(node: Node): boolean {
+  if (matchesCalendarListStructure(node)) return true;
+  const element =
+    node.nodeType === 1 ? (node as Element) : node.nodeType === 3 ? node.parentElement : null;
+  if (!element || element.closest("[data-gce-ui], [data-gce-overlay]")) return false;
+  return [...element.querySelectorAll<HTMLElement>(calendarContainerSelector)].some(
+    isNamedCalendarSection,
+  );
+}
+
+export function matchesCalendarListStructure(node: Node): boolean {
+  const element =
+    node.nodeType === 1 ? (node as Element) : node.nodeType === 3 ? node.parentElement : null;
+  if (!element || element.closest("[data-gce-ui], [data-gce-overlay]")) return false;
+  if (element.matches(calendarControlSelector)) return true;
+
+  const row = element.closest<HTMLElement>(calendarRowSelector);
+  if (row && (readCalendarId(row) || row.querySelector(calendarControlSelector))) return true;
+
+  for (
+    let container = element.matches(calendarContainerSelector)
+      ? (element as HTMLElement)
+      : element.closest<HTMLElement>(calendarContainerSelector);
+    container;
+    container = container.parentElement?.closest<HTMLElement>(calendarContainerSelector) ?? null
+  ) {
+    if (isNamedCalendarSection(container)) return true;
+  }
+  return false;
+}
+
+function isNamedCalendarSection(container: HTMLElement): boolean {
+  const role = container.getAttribute("role");
+  if (role === "navigation" || role === "complementary" || container.matches("nav, aside"))
+    return true;
+  return calendarNamePattern.test(accessibleName(container, container.ownerDocument));
+}
 
 export function findCalendarListRoot(document: Document): HTMLElement | null {
   const containers = [...document.querySelectorAll<HTMLElement>(calendarContainerSelector)].filter(

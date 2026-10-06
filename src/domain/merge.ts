@@ -28,7 +28,8 @@ export function createMergeKey(event: CalendarEvent): string | null {
   return JSON.stringify([
     event.view,
     event.dateKey,
-    event.layoutKey ?? [event.start, event.end, event.allDay],
+    event.allDay ? "all-day" : "timed",
+    event.layoutKey ?? [event.start, event.end],
     title,
   ]);
 }

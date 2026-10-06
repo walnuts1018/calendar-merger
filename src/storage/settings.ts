@@ -9,7 +9,10 @@ export interface Settings {
 }
 
 export const settingsStorageKey = "calendar-merger.settings";
+export const globalSettingsStorageKey = `${settingsStorageKey}.global`;
 const calendarSettingsStoragePrefix = `${settingsStorageKey}.calendar.`;
+const groupSettingsStoragePrefix = `${settingsStorageKey}.group.`;
+const profileSettingsStoragePrefix = `${settingsStorageKey}.profile.`;
 
 export function createDefaultSettings(): Settings {
   return { schemaVersion: 2, mergeEnabled: true, calendars: {}, groups: {}, profiles: {} };
@@ -145,7 +148,7 @@ export function migrateSettings(raw: unknown): Settings {
 }
 
 export interface LocalStorageArea {
-  get(key: string): Promise<Record<string, unknown>>;
+  get(key?: string | null): Promise<Record<string, unknown>>;
   set(items: Record<string, unknown>): Promise<void>;
 }
 
@@ -164,19 +167,38 @@ export function calendarSettingsStorageKey(calendarKey: string): string {
 }
 
 export function calendarKeyFromSettingsStorageKey(storageKey: string): string | null {
-  if (!storageKey.startsWith(calendarSettingsStoragePrefix)) return null;
-  try {
-    const calendarKey = decodeURIComponent(storageKey.slice(calendarSettingsStoragePrefix.length));
-    return calendarKey.length > 0 ? calendarKey : null;
-  } catch {
-    return null;
-  }
+  return decodeStorageKey(storageKey, calendarSettingsStoragePrefix);
+}
+
+export function groupSettingsStorageKey(groupId: string): string {
+  return `${groupSettingsStoragePrefix}${encodeURIComponent(groupId)}`;
+}
+
+export function groupIdFromSettingsStorageKey(storageKey: string): string | null {
+  return decodeStorageKey(storageKey, groupSettingsStoragePrefix);
+}
+
+export function profileSettingsStorageKey(profileId: string): string {
+  return `${profileSettingsStoragePrefix}${encodeURIComponent(profileId)}`;
+}
+
+export function profileIdFromSettingsStorageKey(storageKey: string): string | null {
+  return decodeStorageKey(storageKey, profileSettingsStoragePrefix);
+}
+
+export type SettingsStorageKeyKind = "legacy" | "global" | "calendar" | "group" | "profile";
+
+export function settingsStorageKeyKind(storageKey: string): SettingsStorageKeyKind | null {
+  if (storageKey === settingsStorageKey) return "legacy";
+  if (storageKey === globalSettingsStorageKey) return "global";
+  if (calendarKeyFromSettingsStorageKey(storageKey) !== null) return "calendar";
+  if (groupIdFromSettingsStorageKey(storageKey) !== null) return "group";
+  if (profileIdFromSettingsStorageKey(storageKey) !== null) return "profile";
+  return null;
 }
 
 export function isSettingsStorageKey(storageKey: string): boolean {
-  return (
-    storageKey === settingsStorageKey || calendarKeyFromSettingsStorageKey(storageKey) !== null
-  );
+  return settingsStorageKeyKind(storageKey) !== null;
 }
 
 export class SettingsRepository {
@@ -187,14 +209,8 @@ export class SettingsRepository {
 
   load(calendarKeys: readonly string[] = []): Promise<Settings> {
     return this.enqueue(async () => {
-      const stored = await this.storage.get(settingsStorageKey);
-      const settings = migrateSettings(stored[settingsStorageKey]);
-      for (const calendarKey of new Set(calendarKeys)) {
-        const preferenceKey = calendarSettingsStorageKey(calendarKey);
-        const preference = await this.storage.get(preferenceKey);
-        if (Object.hasOwn(preference, preferenceKey))
-          applyCalendarPreference(settings, calendarKey, preference[preferenceKey]);
-      }
+      const stored = await this.storage.get(null);
+      const settings = settingsFromStorage(stored, new Set(calendarKeys));
       this.settings = migrateSettings(settings);
       return migrateSettings(this.settings);
     });
@@ -202,11 +218,11 @@ export class SettingsRepository {
 
   loadCalendarSettings(calendarKeys: readonly string[]): Promise<Settings> {
     return this.enqueue(async () => {
+      const stored = await this.storage.get(null);
       for (const calendarKey of new Set(calendarKeys)) {
         const preferenceKey = calendarSettingsStorageKey(calendarKey);
-        const preference = await this.storage.get(preferenceKey);
-        if (Object.hasOwn(preference, preferenceKey))
-          applyCalendarPreference(this.settings, calendarKey, preference[preferenceKey]);
+        if (Object.hasOwn(stored, preferenceKey))
+          applyCalendarPreference(this.settings, calendarKey, stored[preferenceKey]);
       }
       return migrateSettings(this.settings);
     });
@@ -214,23 +230,21 @@ export class SettingsRepository {
 
   refreshChangedKeys(storageKeys: readonly string[]): Promise<Settings> {
     return this.enqueue(async () => {
-      if (storageKeys.includes(settingsStorageKey)) {
-        const stored = await this.storage.get(settingsStorageKey);
-        const external = migrateSettings(stored[settingsStorageKey]);
-        this.settings = {
-          ...this.settings,
-          mergeEnabled: external.mergeEnabled,
-          groups: external.groups,
-          profiles: external.profiles,
-        };
-      }
+      const stored = await this.storage.get(null);
+      const external = settingsFromStorage(stored);
+      const kinds = new Set(storageKeys.map(settingsStorageKeyKind));
+      if (kinds.has("legacy") || kinds.has("global"))
+        this.settings.mergeEnabled = external.mergeEnabled;
+      if (kinds.has("legacy") || kinds.has("group")) this.settings.groups = external.groups;
+      if (kinds.has("legacy") || kinds.has("profile")) this.settings.profiles = external.profiles;
+      if (kinds.has("legacy")) this.settings.calendars = external.calendars;
 
       for (const storageKey of new Set(storageKeys)) {
         const calendarKey = calendarKeyFromSettingsStorageKey(storageKey);
         if (!calendarKey) continue;
-        const stored = await this.storage.get(storageKey);
         if (Object.hasOwn(stored, storageKey))
           applyCalendarPreference(this.settings, calendarKey, stored[storageKey]);
+        else delete this.settings.calendars[calendarKey];
       }
       this.settings = migrateSettings(this.settings);
       return migrateSettings(this.settings);
@@ -249,26 +263,37 @@ export class SettingsRepository {
           changedCalendarKeys.delete(calendarKey);
       }
 
-      const globalChanged = !sameValue(globalSettings(this.settings), globalSettings(next));
-      if (changedCalendarKeys.size === 0 && !globalChanged) return;
+      const changedGroupIds = changedRecordIds(this.settings.groups, next.groups);
+      const changedProfileIds = changedRecordIds(this.settings.profiles, next.profiles);
+      const mergeEnabledChanged = this.settings.mergeEnabled !== next.mergeEnabled;
+      if (
+        changedCalendarKeys.size === 0 &&
+        changedGroupIds.size === 0 &&
+        changedProfileIds.size === 0 &&
+        !mergeEnabledChanged
+      )
+        return;
 
       const writes: Record<string, unknown> = {};
-      const mergedLegacyCalendars = { ...this.settings.calendars };
       for (const calendarKey of changedCalendarKeys) {
         const preferences = next.calendars[calendarKey];
         writes[calendarSettingsStorageKey(calendarKey)] = {
           schemaVersion: next.schemaVersion,
           preferences: preferences ?? null,
         };
-        if (preferences) mergedLegacyCalendars[calendarKey] = preferences;
-        else delete mergedLegacyCalendars[calendarKey];
       }
 
-      if (globalChanged) {
-        writes[settingsStorageKey] = {
-          ...next,
-          calendars: mergedLegacyCalendars,
-        } satisfies Settings;
+      for (const groupId of changedGroupIds) {
+        writes[groupSettingsStorageKey(groupId)] = next.groups[groupId] ?? null;
+      }
+      for (const profileId of changedProfileIds) {
+        writes[profileSettingsStorageKey(profileId)] = next.profiles[profileId] ?? null;
+      }
+      if (mergeEnabledChanged) {
+        writes[globalSettingsStorageKey] = {
+          schemaVersion: next.schemaVersion,
+          mergeEnabled: next.mergeEnabled,
+        };
       }
 
       await this.storage.set(writes);
@@ -279,10 +304,16 @@ export class SettingsRepository {
         if (preferences) updated.calendars[calendarKey] = preferences;
         else delete updated.calendars[calendarKey];
       }
-      if (globalChanged) {
-        updated.mergeEnabled = next.mergeEnabled;
-        updated.groups = next.groups;
-        updated.profiles = next.profiles;
+      if (mergeEnabledChanged) updated.mergeEnabled = next.mergeEnabled;
+      for (const groupId of changedGroupIds) {
+        const group = next.groups[groupId];
+        if (group) updated.groups[groupId] = group;
+        else delete updated.groups[groupId];
+      }
+      for (const profileId of changedProfileIds) {
+        const profile = next.profiles[profileId];
+        if (profile) updated.profiles[profileId] = profile;
+        else delete updated.profiles[profileId];
       }
       this.settings = migrateSettings(updated);
     });
@@ -298,13 +329,70 @@ export class SettingsRepository {
   }
 }
 
-function globalSettings(settings: Settings): Omit<Settings, "calendars"> {
-  return {
-    schemaVersion: settings.schemaVersion,
-    mergeEnabled: settings.mergeEnabled,
-    groups: settings.groups,
-    profiles: settings.profiles,
-  };
+function decodeStorageKey(storageKey: string, prefix: string): string | null {
+  if (!storageKey.startsWith(prefix)) return null;
+  try {
+    const id = decodeURIComponent(storageKey.slice(prefix.length));
+    return id.length > 0 && isSafeKey(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function settingsFromStorage(
+  stored: Record<string, unknown>,
+  calendarKeys?: ReadonlySet<string>,
+): Settings {
+  const settings = migrateSettings(stored[settingsStorageKey]);
+  const global = record(stored[globalSettingsStorageKey]);
+  if (global && global.schemaVersion === settings.schemaVersion) {
+    if (typeof global.mergeEnabled === "boolean") settings.mergeEnabled = global.mergeEnabled;
+  }
+
+  for (const [storageKey, rawGroup] of Object.entries(stored)) {
+    const groupId = groupIdFromSettingsStorageKey(storageKey);
+    if (!groupId) continue;
+    if (rawGroup === null) {
+      delete settings.groups[groupId];
+      continue;
+    }
+    const normalized = migrateSettings({
+      schemaVersion: settings.schemaVersion,
+      mergeEnabled: settings.mergeEnabled,
+      groups: { [groupId]: rawGroup },
+    }).groups[groupId];
+    if (normalized) settings.groups[groupId] = normalized;
+    else delete settings.groups[groupId];
+  }
+
+  for (const [storageKey, rawProfile] of Object.entries(stored)) {
+    const profileId = profileIdFromSettingsStorageKey(storageKey);
+    if (!profileId) continue;
+    if (rawProfile === null) {
+      delete settings.profiles[profileId];
+      continue;
+    }
+    const normalized = migrateSettings({
+      schemaVersion: settings.schemaVersion,
+      mergeEnabled: settings.mergeEnabled,
+      profiles: { [profileId]: rawProfile },
+    }).profiles[profileId];
+    if (normalized) settings.profiles[profileId] = normalized;
+    else delete settings.profiles[profileId];
+  }
+
+  for (const [storageKey, rawPreference] of Object.entries(stored)) {
+    const calendarKey = calendarKeyFromSettingsStorageKey(storageKey);
+    if (calendarKey && (!calendarKeys || calendarKeys.has(calendarKey)))
+      applyCalendarPreference(settings, calendarKey, rawPreference);
+  }
+  return migrateSettings(settings);
+}
+
+function changedRecordIds<T>(current: Record<string, T>, next: Record<string, T>): Set<string> {
+  const changed = new Set([...Object.keys(current), ...Object.keys(next)]);
+  for (const id of changed) if (sameValue(current[id], next[id])) changed.delete(id);
+  return changed;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {

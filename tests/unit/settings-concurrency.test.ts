@@ -8,7 +8,12 @@ import type {
 } from "../../src/storage/settings";
 
 import { mountCalendarMergerApplication } from "../../src/application";
-import { SettingsRepository, settingsStorageKey } from "../../src/storage/settings";
+import {
+  groupSettingsStorageKey,
+  profileSettingsStorageKey,
+  SettingsRepository,
+  settingsStorageKey,
+} from "../../src/storage/settings";
 
 class SharedStorage implements LocalStorageArea {
   private readonly values = new Map<string, unknown>();
@@ -18,7 +23,9 @@ class SharedStorage implements LocalStorageArea {
     removeListener: (listener) => this.listeners.delete(listener),
   };
 
-  async get(key: string): Promise<Record<string, unknown>> {
+  async get(key?: string | null): Promise<Record<string, unknown>> {
+    if (key === null || key === undefined)
+      return Object.fromEntries(this.values.entries()) as Record<string, unknown>;
     return this.values.has(key) ? { [key]: this.values.get(key) } : {};
   }
 
@@ -57,6 +64,75 @@ describe("設定の複数タブ同期", () => {
       "calendar:second": { color: "#abcdef", opacity: 0.4 },
     });
     expect(await storage.get(settingsStorageKey)).toEqual({});
+  });
+
+  it("別tabのgroupとprofileの同時更新をそれぞれ保持する", async () => {
+    const storage = new SharedStorage();
+    await storage.set({
+      [settingsStorageKey]: {
+        schemaVersion: 2,
+        mergeEnabled: false,
+        calendars: {},
+        groups: { "group:legacy": { id: "group:legacy", name: "Legacy group" } },
+        profiles: {
+          "profile:legacy": {
+            id: "profile:legacy",
+            name: "Legacy profile",
+            visibleCalendarKeys: [],
+          },
+        },
+      },
+    });
+    const firstTab = new SettingsRepository(storage);
+    const secondTab = new SettingsRepository(storage);
+    const [firstSettings, secondSettings] = await Promise.all([firstTab.load(), secondTab.load()]);
+    delete firstSettings.groups["group:legacy"];
+    delete firstSettings.profiles["profile:legacy"];
+    firstSettings.groups["group:first"] = { id: "group:first", name: "First group" };
+    firstSettings.profiles["profile:first"] = {
+      id: "profile:first",
+      name: "First profile",
+      visibleCalendarKeys: ["calendar:first"],
+    };
+    secondSettings.groups["group:second"] = { id: "group:second", name: "Second group" };
+    secondSettings.profiles["profile:second"] = {
+      id: "profile:second",
+      name: "Second profile",
+      visibleCalendarKeys: ["calendar:second"],
+    };
+
+    await Promise.all([firstTab.save(firstSettings), secondTab.save(secondSettings)]);
+
+    const reader = new SettingsRepository(storage);
+    const loaded = await reader.load();
+    expect(loaded.mergeEnabled).toBe(false);
+    expect(loaded.groups).toEqual({
+      "group:first": { id: "group:first", name: "First group" },
+      "group:second": { id: "group:second", name: "Second group" },
+    });
+    expect(loaded.profiles).toEqual({
+      "profile:first": {
+        id: "profile:first",
+        name: "First profile",
+        visibleCalendarKeys: ["calendar:first"],
+      },
+      "profile:second": {
+        id: "profile:second",
+        name: "Second profile",
+        visibleCalendarKeys: ["calendar:second"],
+      },
+    });
+    expect(await storage.get(groupSettingsStorageKey("group:legacy"))).toEqual({
+      [groupSettingsStorageKey("group:legacy")]: null,
+    });
+    expect(await storage.get(profileSettingsStorageKey("profile:legacy"))).toEqual({
+      [profileSettingsStorageKey("profile:legacy")]: null,
+    });
+    expect((await storage.get(settingsStorageKey))[settingsStorageKey]).toMatchObject({
+      mergeEnabled: false,
+      groups: { "group:legacy": { name: "Legacy group" } },
+      profiles: { "profile:legacy": { name: "Legacy profile" } },
+    });
   });
 
   it("別tabの設定変更を開いているpanelへ反映する", async () => {
@@ -102,6 +178,19 @@ describe("設定の複数タブ同期", () => {
       ),
     );
     expect(uiContainer.textContent).toContain("Work");
+
+    externalSettings.profiles["shared-view"] = {
+      id: "shared-view",
+      name: "Shared view",
+      visibleCalendarKeys: [],
+    };
+    await externalRepository.save(externalSettings);
+    await waitFor(
+      () =>
+        uiContainer.querySelector<HTMLButtonElement>('button[aria-label="Shared viewを適用"]') ??
+        undefined,
+    );
+    expect(uiContainer.querySelector('button[aria-label="Shared viewを適用"]')).not.toBeNull();
 
     externalSettings.calendars["calendar:alpha@example.test"] = {
       color: "#abcdef",

@@ -67,6 +67,20 @@ test("production extensionをChromiumに読み込んで週表示のtest予定を
       .toBe(1);
     await expect(eventElements.first()).toHaveAttribute("style", /top: 1055px !important/);
     await expect(eventElements.first()).toHaveAttribute("style", /height: 48px !important/);
+
+    await page
+      .locator('[role="list"][aria-label="My calendars"]')
+      .evaluate((root) => root.replaceWith(root.cloneNode(true)));
+    await expect
+      .poll(() =>
+        calendarMerger.evaluate((host) =>
+          Boolean(
+            host.isConnected &&
+            host.previousElementSibling?.matches('[role="list"][aria-label="My calendars"]'),
+          ),
+        ),
+      )
+      .toBe(true);
   } finally {
     await context.close();
   }
