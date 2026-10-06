@@ -412,7 +412,7 @@ export async function mountCalendarMergerApplication(
 
   const pipeline = new MutationPipeline(
     document,
-    (dirty) => {
+    (dirty, positionedEvents) => {
       const fullScan = dirty.has(document.documentElement);
       const previousIdentity = identitySignature();
       const view = adapter.getCurrentView();
@@ -421,6 +421,12 @@ export async function mountCalendarMergerApplication(
       const calendarChanged = fullScan || adapter.hasCalendarChanges(dirty);
       const dirtyEvents = new Set(adapter.resolveDirtyEventElements(dirty));
       const renderAll = fullScan || viewChanged || calendarChanged;
+      const eventStructureChanged = [...dirtyEvents].some(
+        (element) => !events.has(element) || !element.isConnected,
+      );
+      const eventPositionChanged = [...dirtyEvents].some((element) =>
+        positionedEvents.has(element),
+      );
 
       if (calendarChanged) {
         const previousKeys = new Set(safeCalendars().map(({ key }) => key));
@@ -445,7 +451,7 @@ export async function mountCalendarMergerApplication(
         }
       }
       const calendarIdentityChanged = previousIdentity !== identitySignature();
-      if (renderAll || calendarIdentityChanged || dirtyEvents.size > 0)
+      if (renderAll || calendarIdentityChanged || eventStructureChanged || eventPositionChanged)
         renderer.invalidateGeometry();
       if (renderAll || calendarIdentityChanged) {
         initializeEvents();

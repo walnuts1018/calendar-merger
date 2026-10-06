@@ -8,6 +8,7 @@ export interface MergedGeometry {
   left: string;
   width: string;
   top?: string;
+  height?: string;
 }
 
 export type GeometryAssessment = { safe: true; geometry?: MergedGeometry } | { safe: false };
@@ -100,6 +101,7 @@ class SemanticCalendarViewAdapter implements CalendarViewAdapter {
     restoreProperty("left");
     restoreProperty("width");
     restoreProperty("top");
+    restoreProperty("height");
   }
 }
 
@@ -119,7 +121,7 @@ function eventTitle(element: Element): string {
   const direct = element.getAttribute("data-event-title") ?? element.getAttribute("title");
   if (direct?.trim()) return direct.trim();
 
-  const content = element.textContent ?? "";
+  const content = `${element.getAttribute("aria-label") ?? ""}\n${element.textContent ?? ""}`;
   const quotedTitle = /[「“"]([^」”"]+)[」”"]/u.exec(content)?.[1]?.trim();
   if (quotedTitle) return quotedTitle;
 
@@ -165,12 +167,13 @@ function eventInterval(
   const times = element.querySelectorAll("time[datetime]");
   const startValue = element.getAttribute("data-start") ?? times[0]?.getAttribute("datetime");
   const endValue = element.getAttribute("data-end") ?? times[1]?.getAttribute("datetime");
-  if (!startValue || !endValue) return semanticInterval(element, view);
+  if (!startValue || !endValue)
+    return semanticInterval(element, view) ?? layoutInterval(element, view);
 
   const start = normalizeDate(startValue);
   const end = normalizeDate(endValue);
   if (!start || !end || Date.parse(end) <= Date.parse(start))
-    return semanticInterval(element, view);
+    return semanticInterval(element, view) ?? layoutInterval(element, view);
   const dateOnlyInterval = !startValue.includes("T") && !endValue.includes("T");
   const allDay = element.getAttribute("data-all-day") === "true" || dateOnlyInterval;
   return { dateKey: start.slice(0, 10), start, end, allDay };
@@ -185,15 +188,16 @@ function semanticInterval(
   end: string;
   allDay: boolean;
 } | null {
-  if (view === "day" || view === "week") return layoutInterval(element, view);
-  if (view !== "month" && view !== "schedule") return null;
+  if (view === "year") return null;
 
   const htmlElement = element as HTMLElement;
-  const content = `${htmlElement.innerText ?? ""}\n${element.textContent ?? ""}`;
-  const dateKey =
-    view === "schedule"
-      ? (element.closest("[data-datekey]")?.getAttribute("data-datekey") ?? null)
-      : localizedDateKey(content);
+  const content = [
+    element.getAttribute("aria-label") ?? "",
+    htmlElement.innerText ?? "",
+    element.textContent ?? "",
+  ].join("\n");
+  const dateFromContainer = element.closest("[data-datekey]")?.getAttribute("data-datekey") ?? null;
+  const dateKey = dateFromContainer ?? localizedDateKey(content);
   if (!dateKey) return null;
 
   const timeRange = parseTimeRange(content);
@@ -358,36 +362,45 @@ function mergedGeometry(
       boxSizing: style.boxSizing,
       paddingLeft: Number.parseFloat(style.paddingLeft) || 0,
       paddingRight: Number.parseFloat(style.paddingRight) || 0,
+      paddingTop: Number.parseFloat(style.paddingTop) || 0,
+      paddingBottom: Number.parseFloat(style.paddingBottom) || 0,
       borderLeft: Number.parseFloat(style.borderLeftWidth) || 0,
       borderRight: Number.parseFloat(style.borderRightWidth) || 0,
+      borderTop: Number.parseFloat(style.borderTopWidth) || 0,
+      borderBottom: Number.parseFloat(style.borderBottomWidth) || 0,
     };
   });
   if (measurements.some((measurement) => measurement === null)) return { safe: false };
   const positioned = measurements.filter((measurement) => measurement !== null);
   const first = positioned[0];
   if (!first) return { safe: false };
+  const semanticInterval = members.every((member) => !member.layoutKey);
+  const top = Math.min(...positioned.map((measurement) => measurement.top));
+  const bottom = Math.max(...positioned.map((measurement) => measurement.top + measurement.height));
+  const verticalBoundsMatch = semanticInterval
+    ? Math.max(...positioned.map((measurement) => measurement.top)) - top <= 8 &&
+      bottom - Math.min(...positioned.map((measurement) => measurement.top + measurement.height)) <=
+        8
+    : positioned.every(
+        (measurement) => measurement.top === first.top && measurement.height === first.height,
+      );
   if (
     positioned.some(
       (measurement) =>
-        measurement.parent !== first.parent ||
-        measurement.top !== first.top ||
-        measurement.height !== first.height ||
-        measurement.boxSizing !== first.boxSizing,
-    )
+        measurement.parent !== first.parent || measurement.boxSizing !== first.boxSizing,
+    ) ||
+    !verticalBoundsMatch
   )
     return { safe: false };
 
   const ordered = positioned.toSorted((left, right) => left.left - right.left);
   let right = ordered[0]?.left ?? 0;
-  let maximumSingleWidth = 0;
   for (const measurement of ordered) {
     if (measurement.left > right + 8) return { safe: false };
     right = Math.max(right, measurement.left + measurement.width);
-    maximumSingleWidth = Math.max(maximumSingleWidth, measurement.width);
   }
   const firstLeft = ordered[0]?.left;
   if (firstLeft === undefined) return { safe: false };
-  if (right - firstLeft <= maximumSingleWidth) return { safe: true };
   const width =
     first.boxSizing === "border-box"
       ? right - firstLeft
@@ -398,7 +411,25 @@ function mergedGeometry(
         first.borderLeft -
         first.borderRight;
   if (width <= 0) return { safe: false };
-  return { safe: true, geometry: { left: `${firstLeft}px`, width: `${width}px` } };
+  const height =
+    first.boxSizing === "border-box"
+      ? bottom - top
+      : bottom -
+        top -
+        first.paddingTop -
+        first.paddingBottom -
+        first.borderTop -
+        first.borderBottom;
+  if (height <= 0) return { safe: false };
+  return {
+    safe: true,
+    geometry: {
+      left: `${firstLeft}px`,
+      width: `${width}px`,
+      top: `${top}px`,
+      height: `${height}px`,
+    },
+  };
 }
 
 function scheduleRowsAreCollapsible(elements: readonly HTMLElement[]): GeometryAssessment {
@@ -457,9 +488,13 @@ function monthStackGeometry(
     return { safe: false };
 
   const top = Math.min(...measurements.map((measurement) => measurement.top));
-  if (top === first.offsetTop) return { safe: true };
   return {
     safe: true,
-    geometry: { left: first.style.left, width: first.style.width, top: `${top}px` },
+    geometry: {
+      left: first.style.left,
+      width: first.style.width,
+      top: `${top}px`,
+      height: first.style.height || firstStyle.height,
+    },
   };
 }

@@ -11,7 +11,10 @@ export class MutationPipeline {
 
   constructor(
     private readonly document: Document,
-    private readonly prepareFrame: (dirtyNodes: ReadonlySet<Node>) => FrameWrite | void,
+    private readonly prepareFrame: (
+      dirtyNodes: ReadonlySet<Node>,
+      positionedEvents: ReadonlySet<HTMLElement>,
+    ) => FrameWrite | void,
     private readonly isOwnStyleMutation: (element: HTMLElement) => boolean = () => false,
     private readonly isRelevantLayoutMutation: (element: Element) => boolean = () => true,
   ) {
@@ -27,6 +30,7 @@ export class MutationPipeline {
       childList: true,
       subtree: true,
       attributes: true,
+      attributeOldValue: true,
       characterData: true,
       attributeFilter: [
         "aria-label",
@@ -100,6 +104,7 @@ export class MutationPipeline {
     const startedAt = this.document.defaultView?.performance.now() ?? 0;
     const records = this.pendingRecords.splice(0);
     const dirty = new Set<Node>();
+    const positionedEvents = new Set<HTMLElement>();
     if (this.initialScanPending) {
       dirty.add(this.document.documentElement);
       this.initialScanPending = false;
@@ -122,6 +127,14 @@ export class MutationPipeline {
         !this.isRelevantLayoutMutation(record.target as Element)
       )
         continue;
+      if (
+        record.type === "attributes" &&
+        record.attributeName === "style" &&
+        HTMLElement &&
+        record.target instanceof HTMLElement &&
+        inlinePositionChanged(record.target, record.oldValue, record.target.getAttribute("style"))
+      )
+        positionedEvents.add(record.target);
       const addedNodes = [...record.addedNodes].filter((node) => !isExtensionOwned(node));
       const removedNodes = [...record.removedNodes].filter((node) => !isExtensionOwned(node));
       if (record.type === "childList" && addedNodes.length === 0 && removedNodes.length === 0)
@@ -131,13 +144,32 @@ export class MutationPipeline {
       for (const node of removedNodes) dirty.add(node);
     }
     if (dirty.size > 0) {
-      const write = this.prepareFrame(dirty);
+      const write = this.prepareFrame(dirty, positionedEvents);
       write?.();
     }
     const endedAt = this.document.defaultView?.performance.now() ?? startedAt;
     this.lastFrameDuration = Math.max(0, endedAt - startedAt);
     if (this.pendingRecords.length > 0) this.queueMicrotask();
   }
+}
+
+function inlinePositionChanged(
+  element: HTMLElement,
+  previous: string | null,
+  current: string | null,
+): boolean {
+  const style = element.ownerDocument.createElement("div").style;
+  style.cssText = previous ?? "";
+  const previousPosition = ["left", "top"].map((property) => [
+    style.getPropertyValue(property),
+    style.getPropertyPriority(property),
+  ]);
+  style.cssText = current ?? "";
+  const currentPosition = ["left", "top"].map((property) => [
+    style.getPropertyValue(property),
+    style.getPropertyPriority(property),
+  ]);
+  return JSON.stringify(previousPosition) !== JSON.stringify(currentPosition);
 }
 
 function isExtensionOwned(node: Node): boolean {

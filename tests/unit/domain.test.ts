@@ -284,6 +284,14 @@ describe("Google Calendar DOM adaptation", () => {
       );
     }
     document.body.insertAdjacentHTML("beforeend", html);
+    const weekEvents = [
+      ...document.querySelectorAll<HTMLElement>("[data-eventchip][data-eventid]"),
+    ];
+    const secondWeekEvent = weekEvents[1];
+    if (secondWeekEvent) {
+      secondWeekEvent.style.top = "1056px";
+      secondWeekEvent.style.height = "47px";
+    }
 
     const adapter = new GoogleCalendarDomAdapter(document);
     expect(adapter.getCurrentView()).toBe("week");
@@ -296,9 +304,17 @@ describe("Google Calendar DOM adaptation", () => {
       ["calendar:shared@example.test", "strong"],
     ]);
     expect(events).toHaveLength(2);
-    expect(events.map(({ title, dateKey, layoutKey }) => [title, dateKey, layoutKey])).toEqual([
-      ["test", "28999", "28999:1055:46"],
-      ["test", "28999", "28999:1055:46"],
+    expect(
+      events.map(({ title, dateKey, start, end, layoutKey }) => [
+        title,
+        dateKey,
+        start,
+        end,
+        layoutKey,
+      ]),
+    ).toEqual([
+      ["test", "28999", "22:00", "23:00", undefined],
+      ["test", "28999", "22:00", "23:00", undefined],
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members).toHaveLength(2);

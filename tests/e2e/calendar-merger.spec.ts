@@ -53,6 +53,43 @@ test("calendarごとの配色、opacity、group visibilityを操作する", asyn
   await expect(nativeCalendar(page, "calendar-2")).toHaveAttribute("aria-checked", "true");
 });
 
+test("Merge中のstyle変更で予定geometryを維持する", async ({ page }) => {
+  await openPanel(page);
+  const canonical = page.locator(
+    '[data-fixture-view="week"] [data-event-title="Weekly Design"][data-calendar-id="calendar-1"]',
+  );
+  const originalGeometry = await canonical.evaluate((element) => {
+    const htmlElement = element as HTMLElement;
+    return { width: htmlElement.style.width, height: htmlElement.style.height };
+  });
+  expect(originalGeometry.width).not.toBe("");
+
+  await canonical.evaluate((element) => {
+    const htmlElement = element as HTMLElement;
+    htmlElement.style.width = "120px";
+    htmlElement.style.height = "16px";
+    htmlElement.classList.add("gce-test-hover-layout");
+  });
+  await expect
+    .poll(() =>
+      canonical.evaluate((element) => ({
+        width: (element as HTMLElement).style.width,
+        height: (element as HTMLElement).style.height,
+      })),
+    )
+    .toEqual(originalGeometry);
+
+  await canonical.evaluate((element) => element.classList.remove("gce-test-hover-layout"));
+  await expect
+    .poll(() =>
+      canonical.evaluate((element) => ({
+        width: (element as HTMLElement).style.width,
+        height: (element as HTMLElement).style.height,
+      })),
+    )
+    .toEqual(originalGeometry);
+});
+
 test("groupを管理し、group SoloとSpotlightを操作する", async ({ page }) => {
   await openPanel(page);
   const inlineCalendarControls = page
@@ -200,7 +237,7 @@ test("Spotlight、全viewの安全なMerge、再描画後の復元を扱う", as
     });
   await expect
     .poll(() => weekly.evaluate((element) => (element as HTMLElement).style.width))
-    .toBe("332px");
+    .toBe("300px");
   await page.getByRole("button", { name: "Next period" }).click();
   await expect(page.locator('[data-gce-overlay="merge-count"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Previous period" }).click();

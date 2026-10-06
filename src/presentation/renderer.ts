@@ -222,6 +222,7 @@ export class EventRenderer {
       this.write(element, "left", geometry.left, "important");
       this.write(element, "width", geometry.width, "important");
       this.write(element, "top", geometry.top ?? null, "important");
+      this.write(element, "height", geometry.height ?? null, "important");
     } else {
       viewAdapter?.restoreGeometry(element, (property) =>
         this.write(element, property, null, "important"),

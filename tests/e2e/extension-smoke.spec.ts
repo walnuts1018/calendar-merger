@@ -30,6 +30,20 @@ test("production extensionをChromiumに読み込んで週表示のtest予定を
         encode(`test-event-${index}@google.com ${owner.encoded}`),
       );
     }
+    const sharedOwner = owners[1];
+    if (!sharedOwner) throw new Error("共有カレンダーfixtureがありません。");
+    const sharedEventId = encode(`test-event-1@google.com ${sharedOwner.encoded}`);
+    const sharedEventStart = events.indexOf(`data-eventid="${sharedEventId}"`);
+    const sharedEventTop = events.indexOf("top: 1055px;", sharedEventStart);
+    const sharedEventHeight = events.indexOf("height: 46px;", sharedEventTop);
+    if (sharedEventStart < 0 || sharedEventTop < 0 || sharedEventHeight < 0)
+      throw new Error("共有カレンダーの予定fixtureを特定できません。");
+    events =
+      events.slice(0, sharedEventTop) +
+      events
+        .slice(sharedEventTop)
+        .replace("top: 1055px;", "top: 1056px;")
+        .replace("height: 46px;", "height: 47px;");
 
     await page.route("https://calendar.google.com/**", (route) =>
       route.fulfill({
@@ -51,6 +65,8 @@ test("production extensionをChromiumに読み込んで週表示のtest予定を
         ),
       )
       .toBe(1);
+    await expect(eventElements.first()).toHaveAttribute("style", /top: 1055px !important/);
+    await expect(eventElements.first()).toHaveAttribute("style", /height: 48px !important/);
   } finally {
     await context.close();
   }
